@@ -70,13 +70,28 @@ public:
     std::array<int, 3> shape(int level) const noexcept { return levels_[level].shape; }
     float scale(int level) const noexcept { return levels_[level].scale; }
 
-    // Lock-free. Resident -> block ptr; else nullptr + parent chunk queued.
-    const Block* block(int level, int bz, int by, int bx) noexcept;
+    // Lock-free block lookup. Resident -> block ptr; else nullptr + parent
+    // chunk queued. The atomic table probe is inlined here (hot: called per
+    // sample on block transitions); only the queue-on-miss path is out-of-line.
+    [[gnu::always_inline]] const Block* block(int level, int bz, int by, int bx) noexcept {
+        const std::uint64_t key = blockKey(level, bz, by, bx);
+        std::size_t i = mix(key) & slotMask_;
+        for (int probe = 0; probe < 64; ++probe) {
+            const Slot& s = slots_[i];
+            std::uint64_t k = s.key.load(std::memory_order_acquire);
+            if (k == key) return s.ptr.load(std::memory_order_acquire);
+            if (k == 0) break;
+            i = (i + 1) & slotMask_;
+        }
+        queueMiss(level, bz, by, bx);
+        return nullptr;
+    }
 
     void setChunkReady(std::function<void()> cb) { onReady_ = std::move(cb); }
 
 private:
     Volume() = default;
+    void queueMiss(int level, int bz, int by, int bx) noexcept;   // out-of-line miss path
     void worker();
     void fetchDecodeChunk(const ChunkId&);
     std::vector<std::uint8_t> getRange(const std::string& key, std::uint64_t off, std::uint64_t len);

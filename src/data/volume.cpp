@@ -94,21 +94,11 @@ Volume::~Volume()
     if (s3_) s3_client_free(s3_);
 }
 
-// ---- LOCK-FREE block lookup ----------------------------------------------
-const Block* Volume::block(int level, int bz, int by, int bx) noexcept
+// ---- block-lookup miss path (probe itself is inlined in the header) -------
+void Volume::queueMiss(int level, int bz, int by, int bx) noexcept
 {
-    const std::uint64_t key = blockKey(level, bz, by, bx);
-    std::size_t i = mix(key) & slotMask_;
-    for (std::size_t probe = 0; probe < 64; ++probe) {       // bounded linear probe
-        const Slot& s = slots_[i];
-        std::uint64_t k = s.key.load(std::memory_order_acquire);
-        if (k == key) return s.ptr.load(std::memory_order_acquire);
-        if (k == 0) break;                                    // empty -> not present
-        i = (i + 1) & slotMask_;
-    }
-    // miss: queue the parent chunk (one decode publishes 4096 blocks)
+    // queue the parent chunk (one decode publishes 4096 blocks)
     queueChunk(ChunkId{level, bz / kBlocksPerChunkAxis, by / kBlocksPerChunkAxis, bx / kBlocksPerChunkAxis});
-    return nullptr;
 }
 
 void Volume::queueChunk(const ChunkId& cid)
