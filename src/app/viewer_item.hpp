@@ -40,6 +40,7 @@ signals:
 protected:
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
     void geometryChange(const QRectF&, const QRectF&) override;
 
@@ -47,6 +48,7 @@ private:
     void rebuildSurface();
     void renderNow();          // synchronous render into image_ (worker-dispatched)
     void scheduleRender();
+    bool worldAt(QPointF pos, Vec3f& out) const;  // screen px -> world voxel
 
     AppState* state_ = nullptr;
     QString viewName_ = "xy";
@@ -57,6 +59,8 @@ private:
     bool pending_ = false;
     QPointF lastPan_;
     bool panning_ = false;
+    bool painting_ = false;
+    bool eraseStroke_ = false;
 };
 
 }  // namespace vc

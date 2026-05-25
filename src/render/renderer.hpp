@@ -9,6 +9,7 @@
 #include "render/surface.hpp"
 #include "render/camera.hpp"
 #include "data/volume.hpp"
+#include "data/mask.hpp"
 
 namespace vc {
 
@@ -24,7 +25,7 @@ struct RenderInput {
     CompositeRenderSettings composite;
     float windowLow = 0.0f, windowHigh = 255.0f;
     Sampling sampling = Sampling::Nearest;
-    const Volume* mask = nullptr;     // optional 3D label mask volume (binary)
+    const MaskVolume* mask = nullptr; // optional 3D label mask (binary)
     std::uint32_t maskColor = 0x80FF3030;  // ARGB overlay tint for labeled voxels
 };
 

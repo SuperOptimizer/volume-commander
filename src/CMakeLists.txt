@@ -1,6 +1,7 @@
 qt_add_executable(volume_commander
   app/main.cpp
   data/volume.cpp
+  data/mask.cpp
   render/surface.cpp
   render/renderer.cpp
   utils/c3d_codec.cpp

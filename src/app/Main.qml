@@ -90,8 +90,11 @@ ApplicationWindow {
                        onToggled: app.claheEnabled = checked }
 
             MenuSeparator { Layout.fillWidth: true }
-            CheckBox { text: "Paint 3D mask"; checked: app.maskPaint
+            CheckBox { text: "Paint 3D mask (L=paint, R=erase)"; checked: app.maskPaint
                        onToggled: app.maskPaint = checked }
+            Label { text: "Brush radius: " + app.brushRadius.toFixed(0) }
+            Slider { Layout.fillWidth: true; from: 1; to: 32; stepSize: 1; value: app.brushRadius
+                     onMoved: app.brushRadius = value }
             Button { text: "Save mask…"; Layout.fillWidth: true
                      onClicked: app.saveMask(segDir.text + "_mask") }
 

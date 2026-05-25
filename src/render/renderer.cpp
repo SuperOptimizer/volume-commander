@@ -55,15 +55,9 @@ inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s)
     return 0.0f;
 }
 
-inline bool maskAt(const Volume* mask, Vec3f w)
+inline bool maskAt(const MaskVolume* mask, Vec3f w)
 {
-    if (!mask) return false;
-    auto shp = const_cast<Volume*>(mask)->shape(0);
-    int ix = int(w[0] + 0.5f), iy = int(w[1] + 0.5f), iz = int(w[2] + 0.5f);
-    if (ix < 0 || iy < 0 || iz < 0 || iz >= shp[0] || iy >= shp[1] || ix >= shp[2]) return false;
-    auto ch = const_cast<Volume*>(mask)->chunk(0, iz/kChunk, iy/kChunk, ix/kChunk);
-    if (!ch || !ch->present) return false;
-    return ch->vox[(std::size_t(iz%kChunk) * kChunk + iy%kChunk) * kChunk + ix%kChunk] != 0;
+    return mask && mask->at(int(w[0] + 0.5f), int(w[1] + 0.5f), int(w[2] + 0.5f));
 }
 
 inline std::uint32_t blendOver(std::uint32_t base, std::uint32_t over)

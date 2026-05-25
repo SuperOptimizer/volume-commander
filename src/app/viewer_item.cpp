@@ -100,14 +100,41 @@ void ViewerItem::geometryChange(const QRectF& n, const QRectF& o)
     if (n.size() != o.size()) scheduleRender();
 }
 
+bool ViewerItem::worldAt(QPointF pos, Vec3f& out) const
+{
+    if (!surface_) return false;
+    const int w = int(width()), h = int(height());
+    int px = std::clamp(int(pos.x()), 0, std::max(0, w - 1));
+    int py = std::clamp(int(pos.y()), 0, std::max(0, h - 1));
+    Tensor3f coords;
+    surface_->gen(&coords, nullptr, w, h, camera_.surfacePtr, camera_.scale, {0, 0, camera_.zOff});
+    if (coords.empty()) return false;
+    Vec3f c = coords(py, px);
+    if (c[0] == QuadSurface::kInvalid || !std::isfinite(c[0])) return false;
+    out = c;
+    return true;
+}
+
 void ViewerItem::mousePressEvent(QMouseEvent* e)
 {
     lastPan_ = e->position();
+    const bool paint = state_ && state_->maskPaint();
+    if (paint && (e->button() == Qt::LeftButton || e->button() == Qt::RightButton)) {
+        Vec3f w;
+        if (worldAt(e->position(), w)) { state_->paintAt(w, e->button() == Qt::RightButton); scheduleRender(); }
+        painting_ = true; eraseStroke_ = (e->button() == Qt::RightButton);
+        return;
+    }
     panning_ = (e->button() == Qt::LeftButton);
 }
 
 void ViewerItem::mouseMoveEvent(QMouseEvent* e)
 {
+    if (painting_) {
+        Vec3f w;
+        if (worldAt(e->position(), w)) { state_->paintAt(w, eraseStroke_); scheduleRender(); }
+        return;
+    }
     if (!panning_ || !surface_) return;
     QPointF d = e->position() - lastPan_;
     lastPan_ = e->position();
@@ -121,6 +148,12 @@ void ViewerItem::mouseMoveEvent(QMouseEvent* e)
         camera_.surfacePtr[1] -= float(d.y() * inv);
     }
     scheduleRender();
+}
+
+void ViewerItem::mouseReleaseEvent(QMouseEvent*)
+{
+    panning_ = false;
+    painting_ = false;
 }
 
 void ViewerItem::wheelEvent(QWheelEvent* e)

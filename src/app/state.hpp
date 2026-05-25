@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "data/volume.hpp"
+#include "data/mask.hpp"
 #include "render/surface.hpp"
 #include "render/compositing.hpp"
 
@@ -28,6 +29,7 @@ class AppState : public QObject {
     Q_PROPERTY(bool rakingEnabled READ rakingEnabled WRITE setRakingEnabled NOTIFY renderChanged)
     Q_PROPERTY(bool claheEnabled READ claheEnabled WRITE setClaheEnabled NOTIFY renderChanged)
     Q_PROPERTY(bool maskPaint READ maskPaint WRITE setMaskPaint NOTIFY maskPaintChanged)
+    Q_PROPERTY(float brushRadius READ brushRadius WRITE setBrushRadius NOTIFY maskPaintChanged)
 
 public:
     explicit AppState(QObject* parent = nullptr) : QObject(parent) {}
@@ -38,7 +40,10 @@ public:
 
     Volume* volume() const { return volume_.get(); }
     std::shared_ptr<QuadSurface> segment() const { return segment_; }
-    Volume* mask() const { return mask_.get(); }
+    MaskVolume* mask() const { return mask_.get(); }
+
+    // Paint into the 3D mask at a world voxel position; erase removes.
+    void paintAt(Vec3f world, bool erase);
     const CompositeRenderSettings& composite() const { return composite_; }
     int renderRev() const { return renderRev_; }
 
@@ -53,6 +58,7 @@ public:
     bool rakingEnabled() const { return composite_.postRakingEnabled; }
     bool claheEnabled() const { return composite_.postClaheEnabled; }
     bool maskPaint() const { return maskPaint_; }
+    float brushRadius() const { return brushRadius_; }
 
     void setWindowLow(float v) { windowLow_ = v; bump(); }
     void setWindowHigh(float v) { windowHigh_ = v; bump(); }
@@ -63,6 +69,7 @@ public:
     void setRakingEnabled(bool e) { composite_.postRakingEnabled = e; bump(); }
     void setClaheEnabled(bool e) { composite_.postClaheEnabled = e; bump(); }
     void setMaskPaint(bool e) { if (maskPaint_ != e) { maskPaint_ = e; emit maskPaintChanged(); } }
+    void setBrushRadius(float r) { if (brushRadius_ != r) { brushRadius_ = r; emit maskPaintChanged(); } }
 
 signals:
     void volumeChanged();
@@ -75,7 +82,8 @@ private:
 
     std::shared_ptr<Volume> volume_;
     std::shared_ptr<QuadSurface> segment_;
-    std::shared_ptr<Volume> mask_;       // 3D binary label mask (lazily created)
+    std::shared_ptr<MaskVolume> mask_;   // 3D binary label mask (lazily created)
+    float brushRadius_ = 3.0f;
     CompositeRenderSettings composite_;
     QString methodName_ = "mean";
     QString volumeUrl_, segmentDir_;
