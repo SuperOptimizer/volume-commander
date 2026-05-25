@@ -14,12 +14,10 @@ inline int sampleNearestLevel(Volume& vol, int level, float sx, float sy, float 
     int ix = int(sx + 0.5f), iy = int(sy + 0.5f), iz = int(sz + 0.5f);
     auto shp = vol.shape(level);
     if (ix < 0 || iy < 0 || iz < 0 || iz >= shp[0] || iy >= shp[1] || ix >= shp[2]) return 0;
-    int cz = iz / kChunk, cy = iy / kChunk, cx = ix / kChunk;
-    auto ch = vol.chunk(level, cz, cy, cx);
-    if (!ch) return -1;
-    if (!ch->present) return 0;  // resident-but-empty -> air
-    int lz = iz % kChunk, ly = iy % kChunk, lx = ix % kChunk;
-    return ch->vox[(std::size_t(lz) * kChunk + ly) * kChunk + lx];
+    const Block* b = vol.block(level, iz >> 4, iy >> 4, ix >> 4);
+    if (!b) return -1;                       // not resident -> caller falls back coarser
+    int lz = iz & 15, ly = iy & 15, lx = ix & 15;
+    return b->v[(std::size_t(lz) * kBlock + ly) * kBlock + lx];
 }
 
 // Adaptive sample: world coords -> value, starting at desiredLevel and
