@@ -36,6 +36,21 @@ find_package(Threads REQUIRED)
 
 qt_standard_project_setup()
 
+# SIMD render kernels: one source instantiated at AVX2 and AVX-512, chosen at
+# runtime via __builtin_cpu_supports. Built once here, linked by every target.
+add_library(vc_kernels STATIC
+  src/render/kernel_avx2.cpp
+  src/render/kernel_avx512.cpp
+  src/render/kernel_dispatch.cpp)
+target_include_directories(vc_kernels PUBLIC src $ENV{HOME}/c3d $ENV{HOME}/libs3)
+set_source_files_properties(src/render/kernel_avx2.cpp PROPERTIES
+  COMPILE_OPTIONS "-mavx2;-mfma")
+set_source_files_properties(src/render/kernel_avx512.cpp PROPERTIES
+  COMPILE_OPTIONS "-mavx512f;-mavx512bw;-mavx512vl;-mfma")
+# dispatch + scalar fallback stay at baseline (no -march=native, runs anywhere)
+set_source_files_properties(src/render/kernel_dispatch.cpp PROPERTIES
+  COMPILE_OPTIONS "-mno-avx;-mno-avx2")
+
 add_subdirectory(src)
 
 # Headless render benchmark (no Qt) — replays a VC_TRACE frame log.
@@ -44,7 +59,7 @@ add_executable(replay bench/replay.cpp
   src/render/surface.cpp src/render/renderer.cpp
   src/utils/c3d_codec.cpp)
 target_include_directories(replay PRIVATE src)
-target_link_libraries(replay PRIVATE ZLIB::ZLIB Threads::Threads PkgConfig::TIFF c3d s3)
+target_link_libraries(replay PRIVATE vc_kernels ZLIB::ZLIB Threads::Threads PkgConfig::TIFF c3d s3)
 if(BLOSC2_FOUND)
   target_link_libraries(replay PRIVATE PkgConfig::BLOSC2)
 endif()
@@ -55,7 +70,7 @@ add_executable(mirror bench/mirror.cpp
   src/data/volume.cpp src/data/mask.cpp
   src/render/surface.cpp src/render/renderer.cpp src/utils/c3d_codec.cpp)
 target_include_directories(mirror PRIVATE src)
-target_link_libraries(mirror PRIVATE ZLIB::ZLIB Threads::Threads PkgConfig::TIFF c3d s3)
+target_link_libraries(mirror PRIVATE vc_kernels ZLIB::ZLIB Threads::Threads PkgConfig::TIFF c3d s3)
 if(BLOSC2_FOUND)
   target_link_libraries(mirror PRIVATE PkgConfig::BLOSC2)
 endif()
@@ -64,5 +79,5 @@ endif()
 enable_testing()
 add_executable(test_render tests/test_render.cpp src/render/surface.cpp src/utils/c3d_codec.cpp)
 target_include_directories(test_render PRIVATE src)
-target_link_libraries(test_render PRIVATE Threads::Threads PkgConfig::TIFF c3d s3)
+target_link_libraries(test_render PRIVATE vc_kernels Threads::Threads PkgConfig::TIFF c3d s3)
 add_test(NAME render_logic COMMAND test_render)

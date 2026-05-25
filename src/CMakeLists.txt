@@ -22,6 +22,7 @@ target_include_directories(volume_commander PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/app)
 
 target_link_libraries(volume_commander PRIVATE
+  vc_kernels
   Qt6::Core Qt6::Gui Qt6::Quick Qt6::Qml
   ZLIB::ZLIB
   Threads::Threads

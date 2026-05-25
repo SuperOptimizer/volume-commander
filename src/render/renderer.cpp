@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <thread>
+#include "render/sample_kernel.hpp"
 
 namespace vc {
 namespace {
@@ -161,6 +162,19 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
     int nThreads = std::clamp(int(hw), 1, 8);
     if (nTiles < 2) nThreads = 1;
 
+    // SIMD run kernel (AVX-512 / AVX2 / scalar, picked once at startup) handles
+    // the nearest-composite path a run of pixels at a time. Trilinear /
+    // single-layer fall back to the scalar per-pixel loop below.
+    static const CompositeRunFn runKernel = pickCompositeRun();
+    const bool useKernel = (samp == Sampling::Nearest);
+    RowKernelArgs ka{};
+    ka.vol = &vol; ka.lvl = lvl; ka.nLayers = nLayers; ka.zStart = zStart;
+    ka.method = cp.method; ka.iso = float(cp.isoCutoff);
+    ka.alphaLo = cp.alphaMin * 255.0f;
+    { float r = cp.alphaMax*255.0f - ka.alphaLo; ka.alphaInvRange = r>0?1.0f/r:0.0f; }
+    ka.alphaOpacity = cp.alphaOpacity; ka.alphaCutoff = cp.alphaCutoff;
+    ka.lightingEnabled = cp.lightingEnabled; ka.lightParams = cp;
+
     auto worker = [&] {
         BlockCursor cur;
         bool miss = false;
@@ -169,6 +183,15 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
             if (t >= nTiles) break;
             int tx = (t % tilesX) * kTile, ty = (t / tilesX) * kTile;
             int x1 = std::min(w, tx + kTile), y1 = std::min(h, ty + kTile);
+            if (useKernel) {
+                for (int y = ty; y < y1; ++y) {
+                    for (int x = tx; x < x1; x += kMaxRun) {
+                        int run = std::min(kMaxRun, x1 - x);
+                        runKernel(ka, run, &coords(y,x), &normals(y,x), &gray(y,x), miss);
+                    }
+                }
+                continue;
+            }
             for (int y = ty; y < y1; ++y) {
                 for (int x = tx; x < x1; ++x) {
                     Vec3f base = coords(y, x);
