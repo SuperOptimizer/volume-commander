@@ -54,17 +54,18 @@ std::shared_ptr<Volume> Volume::open(const std::string& url, int ioThreads)
     std::memset(vol->arena_.back().v.data(), 0, kBlockVox);
     vol->zeroBlock_ = &vol->arena_.back();
 
-    s3_config cfg{};
-    s3_credentials_load("default", &cfg.creds);
-    vol->s3_ = s3_client_new(&cfg);
+    vol->local_ = !vol->prefix_.starts_with("s3://");
+    if (!vol->local_) {
+        s3_config cfg{};
+        s3_credentials_load("default", &cfg.creds);
+        vol->s3_ = s3_client_new(&cfg);
+    }
 
     for (int lvl = 0; lvl < 16; ++lvl) {
-        std::string key = vol->prefix_ + "/" + std::to_string(lvl) + "/zarr.json";
-        s3_response r{};
-        if (s3_get(vol->s3_, key.c_str(), &r) != S3_OK || r.status != 200 || !r.body) { s3_response_free(&r); break; }
-        std::string_view body(reinterpret_cast<char*>(r.body), r.body_len);
+        auto meta = vol->getAll(vol->prefix_ + "/" + std::to_string(lvl) + "/zarr.json");
+        if (meta.empty()) break;
+        std::string_view body(reinterpret_cast<char*>(meta.data()), meta.size());
         auto shp = jsonIntArray(body, "\"shape\"");
-        s3_response_free(&r);
         if (!shp || shp->size() < 3) break;
         LevelMeta m;
         m.path = std::to_string(lvl);
@@ -142,8 +143,36 @@ void Volume::worker()
     }
 }
 
+std::vector<std::uint8_t> Volume::getAll(const std::string& key)
+{
+    if (local_) {
+        std::ifstream f(key, std::ios::binary | std::ios::ate);
+        if (!f) return {};
+        std::size_t n = std::size_t(f.tellg()); f.seekg(0);
+        std::vector<std::uint8_t> out(n);
+        f.read(reinterpret_cast<char*>(out.data()), std::streamsize(n));
+        if (!f) return {};
+        return out;
+    }
+    s3_response r{};
+    std::vector<std::uint8_t> out;
+    if (s3_get(s3_, key.c_str(), &r) == S3_OK && r.status == 200 && r.body)
+        out.assign(r.body, r.body + r.body_len);
+    s3_response_free(&r);
+    return out;
+}
+
 std::vector<std::uint8_t> Volume::getRange(const std::string& key, std::uint64_t off, std::uint64_t len)
 {
+    if (local_) {
+        std::ifstream f(key, std::ios::binary);
+        if (!f) return {};
+        f.seekg(std::streamoff(off));
+        std::vector<std::uint8_t> out(len);
+        f.read(reinterpret_cast<char*>(out.data()), std::streamsize(len));
+        out.resize(std::size_t(f.gcount()));
+        return out;
+    }
     s3_response r{};
     auto rc = s3_get_range(s3_, key.c_str(), off, len, &r);
     std::vector<std::uint8_t> out;

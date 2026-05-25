@@ -80,6 +80,7 @@ private:
     void worker();
     void fetchDecodeChunk(const ChunkId&);
     std::vector<std::uint8_t> getRange(const std::string& key, std::uint64_t off, std::uint64_t len);
+    std::vector<std::uint8_t> getAll(const std::string& key);   // whole object/file
     void publishChunk(const ChunkId&, const std::uint8_t* vox256, bool present);
     std::string diskPath(const ChunkId&) const;
     bool diskLoad(const ChunkId&, std::vector<std::uint8_t>& out256, bool& present);
@@ -105,6 +106,7 @@ private:
     };
 
     std::string prefix_, cacheKey_;
+    bool local_ = false;            // prefix_ is a filesystem path, not s3://
     std::vector<LevelMeta> levels_;
     s3_client* s3_ = nullptr;
 

@@ -44,3 +44,10 @@ target_link_libraries(replay PRIVATE ZLIB::ZLIB Threads::Threads PkgConfig::TIFF
 if(BLOSC2_FOUND)
   target_link_libraries(replay PRIVATE PkgConfig::BLOSC2)
 endif()
+
+# Self-contained unit tests (no S3). `ctest` or run ./build/test_render.
+enable_testing()
+add_executable(test_render tests/test_render.cpp src/render/surface.cpp src/utils/c3d_codec.cpp)
+target_include_directories(test_render PRIVATE src)
+target_link_libraries(test_render PRIVATE Threads::Threads PkgConfig::TIFF c3d s3)
+add_test(NAME render_logic COMMAND test_render)
