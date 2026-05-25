@@ -6,6 +6,11 @@
 #include <filesystem>
 #include <print>
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 extern "C" {
 #include <libs3.h>
 }
@@ -184,8 +189,12 @@ std::vector<std::uint8_t> Volume::getRange(const std::string& key, std::uint64_t
 
 void Volume::fetchDecodeChunk(const ChunkId& id)
 {
-    std::vector<std::uint8_t> vox; bool present = false;
-    if (diskLoad(id, vox, present)) { publishChunk(id, present ? vox.data() : nullptr, present); return; }
+    DiskMap dm; const std::uint8_t* dvox = nullptr; bool present = false;
+    if (diskLoad(id, dm, &dvox, present)) {
+        publishChunk(id, dvox, present);   // copies mapped voxels into blocks
+        diskUnmap(dm);
+        return;
+    }
 
     const auto& lm = levels_[id.level];
     int sz = id.iz / kShardChunks, sy = id.iy / kShardChunks, sx = id.ix / kShardChunks;
@@ -292,14 +301,27 @@ std::string Volume::diskPath(const ChunkId& id) const
          + std::to_string(id.level) + "_" + std::to_string(id.iz) + "_"
          + std::to_string(id.iy) + "_" + std::to_string(id.ix) + ".chunk";
 }
-bool Volume::diskLoad(const ChunkId& id, std::vector<std::uint8_t>& out, bool& present)
+bool Volume::diskLoad(const ChunkId& id, DiskMap& map, const std::uint8_t** vox, bool& present)
 {
-    std::ifstream f(diskPath(id), std::ios::binary);
-    if (!f) return false;
-    char tag = 0; f.read(&tag, 1);
-    present = tag != 0;
-    if (present) { out.assign(kChunkVox, 0); f.read(reinterpret_cast<char*>(out.data()), kChunkVox); if (!f) return false; }
+    int fd = ::open(diskPath(id).c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    struct stat st;
+    if (::fstat(fd, &st) != 0 || st.st_size < 1) { ::close(fd); return false; }
+    // file = [tag:1 | voxels:256^3 if present]. mmap it; the kernel pages it in
+    // from its page cache on demand — no read() copy, no fresh-page zero-fill.
+    void* addr = ::mmap(nullptr, std::size_t(st.st_size), PROT_READ, MAP_PRIVATE, fd, 0);
+    ::close(fd);
+    if (addr == MAP_FAILED) return false;
+    const std::uint8_t* p = static_cast<const std::uint8_t*>(addr);
+    present = p[0] != 0;
+    if (present && st.st_size < std::streamoff(1 + kChunkVox)) { ::munmap(addr, st.st_size); return false; }
+    map = {addr, std::size_t(st.st_size)};
+    *vox = present ? p + 1 : nullptr;
     return true;
+}
+void Volume::diskUnmap(DiskMap& map)
+{
+    if (map.addr) { ::munmap(map.addr, map.len); map.addr = nullptr; }
 }
 void Volume::diskStore(const ChunkId& id, const std::uint8_t* vox, bool present)
 {

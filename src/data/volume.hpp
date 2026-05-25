@@ -83,7 +83,12 @@ private:
     std::vector<std::uint8_t> getAll(const std::string& key);   // whole object/file
     void publishChunk(const ChunkId&, const std::uint8_t* vox256, bool present);
     std::string diskPath(const ChunkId&) const;
-    bool diskLoad(const ChunkId&, std::vector<std::uint8_t>& out256, bool& present);
+    // mmap the disk-cache chunk file (no copy, no fault-zeroing). On hit:
+    // returns true; *present set; if present, *vox points at the mapped 256^3
+    // voxels (valid until diskUnmap(map,len)). Miss returns false.
+    struct DiskMap { void* addr = nullptr; std::size_t len = 0; };
+    bool diskLoad(const ChunkId&, DiskMap& map, const std::uint8_t** vox, bool& present);
+    static void diskUnmap(DiskMap& map);
     void diskStore(const ChunkId&, const std::uint8_t* vox256, bool present);
 
     static std::uint64_t blockKey(int level, int bz, int by, int bx) noexcept {
