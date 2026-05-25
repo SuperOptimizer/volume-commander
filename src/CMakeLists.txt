@@ -1,6 +1,8 @@
 # Sources accumulate here as the port progresses.
 set(VC_SOURCES
   app/main.cpp
+  data/volume.cpp
+  utils/c3d_codec.cpp
 )
 
 qt_add_executable(volume_commander ${VC_SOURCES})
