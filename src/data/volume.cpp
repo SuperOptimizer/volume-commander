@@ -50,9 +50,9 @@ std::shared_ptr<Volume> Volume::open(const std::string& url, int ioThreads)
     constexpr std::size_t kSlots = std::size_t(1) << 23;   // 8,388,608
     vol->slots_ = std::vector<Slot>(kSlots);
     vol->slotMask_ = kSlots - 1;
-    vol->arena_.emplace_back();                            // index 0 = the zero block
-    std::memset(vol->arena_.back().v.data(), 0, kBlockVox);
-    vol->zeroBlock_ = &vol->arena_.back();
+    vol->arena_.emplace_back(1);                           // slab 0, one block = zero block
+    std::memset(vol->arena_.back()[0].v.data(), 0, kBlockVox);
+    vol->zeroBlock_ = &vol->arena_.back()[0];
 
     vol->local_ = !vol->prefix_.starts_with("s3://");
     if (!vol->local_) {
@@ -227,6 +227,17 @@ void Volume::publishChunk(const ChunkId& id, const std::uint8_t* vox, bool prese
     const int b0y = id.iy * kBlocksPerChunkAxis;
     const int b0x = id.ix * kBlocksPerChunkAxis;
 
+    // One slab of 4096 blocks for the whole chunk, allocated under a SINGLE
+    // lock (was one lock + one zero-init per block = 4096x). Blocks are filled
+    // by memcpy below (every byte written), so no pre-zeroing needed.
+    std::vector<Block>* slab = nullptr;
+    if (present) {
+        std::lock_guard lk(arenaMtx_);
+        arena_.emplace_back(kBlocksPerChunk);
+        slab = &arena_.back();
+    }
+    int slabIdx = 0;
+
     for (int bz = 0; bz < kBlocksPerChunkAxis; ++bz)
       for (int by = 0; by < kBlocksPerChunkAxis; ++by)
         for (int bx = 0; bx < kBlocksPerChunkAxis; ++bx) {
@@ -234,8 +245,7 @@ void Volume::publishChunk(const ChunkId& id, const std::uint8_t* vox, bool prese
             if (!present) {
                 blk = zeroBlock_;
             } else {
-                Block* nb;
-                { std::lock_guard lk(arenaMtx_); arena_.emplace_back(); nb = &arena_.back(); }
+                Block* nb = &(*slab)[slabIdx++];
                 for (int z = 0; z < kBlock; ++z)
                   for (int y = 0; y < kBlock; ++y) {
                     const std::uint8_t* src = vox

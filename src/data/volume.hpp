@@ -113,8 +113,11 @@ private:
     // lock-free slot table (power-of-2) + block arena (never freed in-session)
     std::vector<Slot> slots_;
     std::uint64_t slotMask_ = 0;
-    std::deque<Block> arena_;                     // stable addresses
-    std::mutex arenaMtx_;                         // only IO workers, only on publish
+    // Arena of block slabs: one slab (vector of Blocks) per decoded chunk.
+    // deque never relocates existing elements, so Block* stay stable for
+    // lock-free readers. One mutex acquisition per chunk (not per block).
+    std::deque<std::vector<Block>> arena_;
+    std::mutex arenaMtx_;
     const Block* zeroBlock_ = nullptr;            // shared all-zero block (absent regions)
 
     // chunk dedup (publish-once) — small set, only touched by IO workers
