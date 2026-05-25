@@ -138,11 +138,19 @@ void ViewerItem::dispatchRender()
     snap->volume = state_->volume();
     snap->camera = camera_;
     snap->camera.scale = camera_.scale / float(ds);
+    // Coarser pyramid level while moving: 1/8 the voxels + far fewer block
+    // fetches. Snaps back to the correct level when idle (free static quality,
+    // like the downscale). Clamp to the coarsest available level.
+    if (interactive_ && state_->volume())
+        snap->camera.dsIdx = std::min(camera_.dsIdx + 1, state_->volume()->numLevels() - 1);
     snap->composite = state_->composite();
     snap->windowLow = state_->windowLow();
     snap->windowHigh = state_->windowHigh();
     snap->sampling = state_->sampling();
-    snap->layerStride = interactive_ ? 3 : 1;   // subsample the ray while moving
+    // Ray subsampling: aggressive (4) while moving, light (2) when idle. For
+    // max/mean over many layers stride-2 is near-indistinguishable; full
+    // quality (1) is available but the heavy seg frames don't need it.
+    snap->layerStride = interactive_ ? 4 : 2;
     snap->mask = state_->mask();
 
     if (FrameTrace::instance().enabled())
