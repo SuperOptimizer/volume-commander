@@ -14,8 +14,11 @@ namespace vc {
 // output resolution (pixels per world unit at level 0).
 struct Surface {
     virtual ~Surface() = default;
+    // zOff: shift the sampled sheet along its normal by zOff world voxels
+    // (shift+scroll). Plane: moves the slice in/out along the view axis.
+    // Quad: rigidly pushes the flattened surface forward/backward.
     virtual void gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-                     Vec3f ptr, float scale, Vec3f offset) const = 0;
+                     Vec3f ptr, float scale, float zOff) const = 0;
     virtual Vec3f pointer() const { return {0, 0, 0}; }
     virtual bool isPlane() const { return false; }
 };
@@ -42,10 +45,10 @@ struct PlaneSurface : Surface {
     }
 
     void gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-             Vec3f ptr, float scale, Vec3f offset) const override
+             Vec3f ptr, float scale, float zOff) const override
     {
         const float inv = 1.0f / scale;
-        Vec3f o = origin + ptr + offset;
+        Vec3f o = origin + ptr + normal * zOff;   // slice along the view axis
         if (coords) coords->create({h, w});
         if (normals) normals->create({h, w});
         for (int y = 0; y < h; ++y) {
@@ -73,7 +76,7 @@ struct QuadSurface : Surface {
     static std::shared_ptr<QuadSurface> load(const std::string& tifxyzDir);
 
     void gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-             Vec3f ptr, float scale, Vec3f offset) const override;
+             Vec3f ptr, float scale, float zOff) const override;
     Vec3f pointer() const override;
 };
 

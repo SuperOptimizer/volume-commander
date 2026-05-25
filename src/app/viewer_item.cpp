@@ -188,7 +188,7 @@ bool ViewerItem::worldAt(QPointF pos, Vec3f& out) const
     int px = std::clamp(int(pos.x()), 0, std::max(0, w - 1));
     int py = std::clamp(int(pos.y()), 0, std::max(0, h - 1));
     Tensor3f coords;
-    surface_->gen(&coords, nullptr, w, h, camera_.surfacePtr, camera_.scale, {0, 0, camera_.zOff});
+    surface_->gen(&coords, nullptr, w, h, camera_.surfacePtr, camera_.scale, camera_.zOff);
     if (coords.empty()) return false;
     Vec3f c = coords(py, px);
     if (c[0] == QuadSurface::kInvalid || !std::isfinite(c[0])) return false;

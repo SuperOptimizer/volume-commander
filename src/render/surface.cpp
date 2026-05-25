@@ -146,7 +146,7 @@ Vec3f QuadSurface::pointer() const
 }
 
 void QuadSurface::gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-                      Vec3f ptr, float scale, Vec3f offset) const
+                      Vec3f ptr, float scale, float zOff) const
 {
     if (coords) coords->create({h, w});
     if (normals) normals->create({h, w});
@@ -156,31 +156,43 @@ void QuadSurface::gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
     // grid steps per output pixel; center the view on ptr (grid coords).
     const float sx = gridScale[0] / scale;
     const float sy = gridScale[1] / scale;
-    const float cx = ptr[0] + offset[0];
-    const float cy = ptr[1] + offset[1];
+    const float cx = ptr[0];
+    const float cy = ptr[1];
 
     auto valid = [&](const Vec3f& v) { return v[0] != kInvalid && std::isfinite(v[0]); };
+
+    auto sampleGrid = [&](float gx, float gy, Vec3f& world, Vec3f& nrm) -> bool {
+        int ix = int(std::floor(gx)), iy = int(std::floor(gy));
+        if (ix < 0 || iy < 0 || ix >= gw - 1 || iy >= gh - 1) return false;
+        const Vec3f& p00 = points(iy, ix);
+        const Vec3f& p10 = points(iy, ix + 1);
+        const Vec3f& p01 = points(iy + 1, ix);
+        const Vec3f& p11 = points(iy + 1, ix + 1);
+        if (!(valid(p00) && valid(p10) && valid(p01) && valid(p11))) return false;
+        float fx = gx - ix, fy = gy - iy;
+        Vec3f a = p00 + (p10 - p00) * fx;
+        Vec3f b = p01 + (p11 - p01) * fx;
+        world = a + (b - a) * fy;
+        nrm = normalized(cross(p10 - p00, p01 - p00));
+        return true;
+    };
+
+    // Rigid z-push: shift the whole sheet along the normal at the view center
+    // (VC3D's flattened shift+scroll). One direction for the frame so the push
+    // is rigid — no per-pixel curvature drift.
+    Vec3f pushDir{0, 0, 0};
+    if (zOff != 0.0f) {
+        Vec3f cw, cn;
+        if (sampleGrid(cx, cy, cw, cn)) pushDir = cn * zOff;
+    }
 
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             float gx = cx + (x - w * 0.5f) * sx;
             float gy = cy + (y - h * 0.5f) * sy;
-            int ix = int(std::floor(gx)), iy = int(std::floor(gy));
             Vec3f world{kInvalid, kInvalid, kInvalid};
             Vec3f nrm{0, 0, 1};
-            if (ix >= 0 && iy >= 0 && ix < gw - 1 && iy < gh - 1) {
-                const Vec3f& p00 = points(iy, ix);
-                const Vec3f& p10 = points(iy, ix + 1);
-                const Vec3f& p01 = points(iy + 1, ix);
-                const Vec3f& p11 = points(iy + 1, ix + 1);
-                if (valid(p00) && valid(p10) && valid(p01) && valid(p11)) {
-                    float fx = gx - ix, fy = gy - iy;
-                    Vec3f a = p00 + (p10 - p00) * fx;
-                    Vec3f b = p01 + (p11 - p01) * fx;
-                    world = a + (b - a) * fy;
-                    nrm = normalized(cross(p10 - p00, p01 - p00));
-                }
-            }
+            if (sampleGrid(gx, gy, world, nrm)) world += pushDir;
             if (coords) (*coords)(y, x) = world;
             if (normals) (*normals)(y, x) = nrm;
         }
