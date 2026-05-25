@@ -92,7 +92,9 @@ void compositeRun(const RowKernelArgs& a, int n,
         const float iso = a.iso;
         switch (a.method) {
             case CompositeMethod::max:
-                for (int i=0;i<n;++i){ float v=sample[i]<iso?0.f:sample[i]; if(valid[i]&&v>amax[i])amax[i]=v; }
+                // branchless max (the priority path): invalid lanes sample 0,
+                // their amax is discarded in finalize, so no valid[] guard.
+                for (int i=0;i<n;++i){ float v=sample[i]<iso?0.f:sample[i]; amax[i]=v>amax[i]?v:amax[i]; }
                 break;
             case CompositeMethod::min:
                 for (int i=0;i<n;++i){ float v=sample[i]<iso?0.f:sample[i]; if(valid[i]){ if(v<amin[i])amin[i]=v; cnt[i]=1; } }
