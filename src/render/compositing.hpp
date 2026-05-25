@@ -106,6 +106,56 @@ inline float compositeLayerStack(std::span<const float> layers, const CompositeP
     }
 }
 
+// Streaming compositor: fold samples one at a time, no per-pixel buffer.
+// Lets max/min/mean run as a single accumulator and alpha early-terminate
+// when it saturates (skips the rest of the ray — a real win on opaque rays).
+struct Compositor {
+    const CompositeParams& p;
+    float acc = 0.0f, a = 0.0f;     // accumulator; a = accumulated alpha
+    float mn = 255.0f, mx = 0.0f, sum = 0.0f;
+    int n = 0;
+    float lo = 0.0f, invRange = 0.0f;
+    bool saturated = false;
+
+    explicit Compositor(const CompositeParams& params) : p(params) {
+        if (p.method == CompositeMethod::alpha) {
+            lo = p.alphaMin * 255.0f;
+            float range = p.alphaMax * 255.0f - lo;
+            invRange = range > 0.0f ? 1.0f / range : 0.0f;
+        }
+    }
+    // returns false once the ray is done (alpha saturated) so the caller can stop
+    bool add(float v) noexcept {
+        switch (p.method) {
+            case CompositeMethod::max: mx = std::max(mx, v); break;
+            case CompositeMethod::min: mn = std::min(mn, v); break;
+            case CompositeMethod::alpha: {
+                if (invRange == 0.0f) { saturated = true; return false; }
+                float nn = (v - lo) * invRange;
+                if (nn > 0.0f) {
+                    nn = std::min(nn, 1.0f);
+                    float op = std::min(nn * p.alphaOpacity, 1.0f);
+                    float w = (1.0f - a) * op;
+                    acc += w * nn; a += w;
+                    if (a >= p.alphaCutoff) { saturated = true; return false; }
+                }
+                break;
+            }
+            default: sum += v; break;   // mean
+        }
+        ++n;
+        return true;
+    }
+    float value() const noexcept {
+        switch (p.method) {
+            case CompositeMethod::max:   return mx;
+            case CompositeMethod::min:   return n ? mn : 0.0f;
+            case CompositeMethod::alpha: return std::clamp(acc * 255.0f, 0.0f, 255.0f);
+            default:                     return n ? sum / float(n) : 0.0f;
+        }
+    }
+};
+
 inline float computeLightingFactor(const vc::Vec3f& n, const CompositeParams& p) noexcept
 {
     if (!p.lightingEnabled) return 1.0f;

@@ -123,6 +123,11 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
     int zStart = -behind;
     if (cs.reverseDirection) zStart = -front;
 
+    // Force nearest when compositing multiple layers: the multi-sample
+    // averaging already low-passes, so per-layer trilinear is wasted work
+    // (8x the taps for no visible gain). Trilinear only matters single-layer.
+    Sampling samp = (nLayers > 1) ? Sampling::Nearest : in.sampling;
+
     const int lvl = in.camera.dsIdx;
     auto lut = grayLut(in.windowLow, in.windowHigh);
 
@@ -146,7 +151,6 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
 
     auto worker = [&] {
         BlockCursor cur;
-        std::vector<float> stack(nLayers);
         bool miss = false;
         for (;;) {
             int t = nextTile.fetch_add(1, std::memory_order_relaxed);
@@ -158,14 +162,17 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
                     Vec3f base = coords(y, x);
                     if (base[0] == QuadSurface::kInvalid || !std::isfinite(base[0])) { gray(y, x) = 0; continue; }
                     Vec3f nrm = normals(y, x);
-                    int valid = 0;
-                    for (int li = 0; li < nLayers; ++li) {
-                        Vec3f p = base + nrm * float(zStart + li);
-                        float v = sampleAdaptive(vol, lvl, p, in.sampling, miss, cur);
-                        if (v < float(cp.isoCutoff)) v = 0.0f;
-                        stack[valid++] = v;
+                    // Walk the ray once, folding each sample into the streaming
+                    // compositor (no per-pixel buffer; alpha can early-out).
+                    Compositor comp(cp);
+                    const float iso = float(cp.isoCutoff);
+                    Vec3f p = base + nrm * float(zStart);
+                    for (int li = 0; li < nLayers; ++li, p += nrm) {
+                        float v = sampleAdaptive(vol, lvl, p, samp, miss, cur);
+                        if (v < iso) v = 0.0f;
+                        if (!comp.add(v)) break;
                     }
-                    float val = compositeLayerStack({stack.data(), std::size_t(valid)}, cp);
+                    float val = comp.value();
                     if (cp.lightingEnabled) val *= computeLightingFactor(nrm, cp);
                     gray(y, x) = std::uint8_t(std::clamp(val, 0.0f, 255.0f));
                 }
