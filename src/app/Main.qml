@@ -35,15 +35,40 @@ ApplicationWindow {
             Layout.fillHeight: true
             property real cw: (width  - 2) / 2
             property real ch: (height - 2) / 2
+            property string maximized: ""   // "" = 2x2; else the maximized view name
 
-            ViewerItem { x: 0;            y: 0;            width: grid.cw; height: grid.ch
-                         state: app; view: "xy"; ViewerLabel { text: "XY" } }
-            ViewerItem { x: grid.cw + 2;  y: 0;            width: grid.cw; height: grid.ch
-                         state: app; view: "xz"; ViewerLabel { text: "XZ" } }
-            ViewerItem { x: 0;            y: grid.ch + 2;  width: grid.cw; height: grid.ch
-                         state: app; view: "yz"; ViewerLabel { text: "YZ" } }
-            ViewerItem { x: grid.cw + 2;  y: grid.ch + 2;  width: grid.cw; height: grid.ch
-                         state: app; view: "seg"; ViewerLabel { text: "SEGMENT" } }
+            // One pane. Double-click (or the corner button) toggles maximize:
+            // the chosen pane fills the whole panel; the others hide.
+            component Pane: ViewerItem {
+                id: pane
+                required property string vname
+                required property real gx
+                required property real gy
+                required property string vlabel
+                state: app
+                view: vname
+                visible: grid.maximized === "" || grid.maximized === vname
+                x: grid.maximized === vname ? 0 : gx
+                y: grid.maximized === vname ? 0 : gy
+                width:  grid.maximized === vname ? grid.width  : grid.cw
+                height: grid.maximized === vname ? grid.height : grid.ch
+
+                ViewerLabel { text: pane.vlabel }
+                // maximize / restore toggle (top-right)
+                Rectangle {
+                    width: 22; height: 22; radius: 3; color: "#60000000"
+                    anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4
+                    Text { anchors.centerIn: parent; color: "white"; font.pixelSize: 14
+                           text: grid.maximized === pane.vname ? "❐" : "⛶" }
+                    MouseArea { anchors.fill: parent; onClicked:
+                        grid.maximized = (grid.maximized === pane.vname ? "" : pane.vname) }
+                }
+            }
+
+            Pane { vname: "xy";  vlabel: "XY";      gx: 0;           gy: 0 }
+            Pane { vname: "xz";  vlabel: "XZ";      gx: grid.cw + 2; gy: 0 }
+            Pane { vname: "yz";  vlabel: "YZ";      gx: 0;           gy: grid.ch + 2 }
+            Pane { vname: "seg"; vlabel: "SEGMENT"; gx: grid.cw + 2; gy: grid.ch + 2 }
         }
 
         Rectangle {
