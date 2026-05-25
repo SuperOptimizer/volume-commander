@@ -24,6 +24,7 @@ bool AppState::loadSegment(const QString& dir)
 {
     auto s = QuadSurface::load(dir.toStdString());
     if (!s) { std::println(stderr, "loadSegment failed: {}", dir.toStdString()); return false; }
+    std::println("loaded segment {} grid {}x{}", dir.toStdString(), s->points.rows(), s->points.cols());
     segment_ = s;
     segmentDir_ = dir;
     emit segmentChanged();

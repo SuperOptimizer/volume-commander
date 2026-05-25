@@ -7,9 +7,29 @@
 #include <print>
 
 #include <tiffio.h>
+extern "C" {
+#include <libs3.h>
+}
 
 namespace vc {
 namespace {
+
+// Fetch one S3 object to a local temp file; returns the temp path ("" on fail).
+std::string s3ToTemp(s3_client* c, const std::string& url, const char* suffix)
+{
+    s3_response r{};
+    if (s3_get(c, url.c_str(), &r) != S3_OK || r.status != 200 || !r.body) {
+        std::println(stderr, "segment: fetch failed ({}) {}", r.status, url);
+        s3_response_free(&r);
+        return {};
+    }
+    auto p = std::filesystem::temp_directory_path()
+           / ("vc_seg_" + std::to_string(std::hash<std::string>{}(url)) + suffix);
+    std::ofstream f(p, std::ios::binary);
+    f.write(reinterpret_cast<const char*>(r.body), r.body_len);
+    s3_response_free(&r);
+    return p.string();
+}
 
 // Read one single-channel TIFF into channel `ch` of `pts` (allocating on the
 // first band). Handles float32/64 and (u)int 8/16/32. Strip and tiled layouts.
@@ -90,14 +110,33 @@ Vec2f readScale(const std::filesystem::path& metaPath)
 std::shared_ptr<QuadSurface> QuadSurface::load(const std::string& dir)
 {
     auto qs = std::make_shared<QuadSurface>();
-    std::filesystem::path d(dir);
-    if (!readBand(d / "x.tif", qs->points, 0) ||
-        !readBand(d / "y.tif", qs->points, 1) ||
-        !readBand(d / "z.tif", qs->points, 2)) {
-        return nullptr;
+    std::string d = dir;
+    while (!d.empty() && d.back() == '/') d.pop_back();
+
+    std::filesystem::path xp, yp, zp, mp;
+    s3_client* s3 = nullptr;
+    if (d.starts_with("s3://")) {
+        s3_config cfg{};
+        s3_credentials_load("default", &cfg.creds);
+        s3 = s3_client_new(&cfg);
+        xp = s3ToTemp(s3, d + "/x.tif", "_x.tif");
+        yp = s3ToTemp(s3, d + "/y.tif", "_y.tif");
+        zp = s3ToTemp(s3, d + "/z.tif", "_z.tif");
+        mp = s3ToTemp(s3, d + "/meta.json", "_meta.json");
+        if (xp.empty() || yp.empty() || zp.empty()) { if (s3) s3_client_free(s3); return nullptr; }
+    } else {
+        std::filesystem::path p(d);
+        xp = p / "x.tif"; yp = p / "y.tif"; zp = p / "z.tif"; mp = p / "meta.json";
     }
-    qs->gridScale = readScale(d / "meta.json");
-    qs->id = d.filename().string();
+
+    bool ok = readBand(xp, qs->points, 0) && readBand(yp, qs->points, 1) && readBand(zp, qs->points, 2);
+    if (ok) qs->gridScale = readScale(mp);
+    if (s3) {
+        s3_client_free(s3);
+        for (auto& t : {xp, yp, zp, mp}) { std::error_code ec; std::filesystem::remove(t, ec); }
+    }
+    if (!ok) return nullptr;
+    qs->id = std::filesystem::path(d).filename().string();
     return qs;
 }
 
