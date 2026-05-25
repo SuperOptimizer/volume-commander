@@ -1,14 +1,26 @@
-#include <QApplication>
-#include <QMainWindow>
-#include <QLabel>
+#include <QGuiApplication>
+#include <QQmlApplicationEngine>
+#include <QQmlContext>
+
+#include "app/state.hpp"
+#include "app/viewer_item.hpp"
 
 int main(int argc, char** argv)
 {
-    QApplication app(argc, argv);
-    QMainWindow win;
-    win.setWindowTitle("volume-commander");
-    win.resize(1280, 800);
-    win.setCentralWidget(new QLabel("volume-commander — 3D ink labeler", &win));
-    win.show();
+    QGuiApplication app(argc, argv);
+    app.setApplicationName("volume-commander");
+
+    QQmlApplicationEngine engine;
+    engine.loadFromModule("VolumeCommander", "Main");
+    if (engine.rootObjects().isEmpty()) return -1;
+
+    // CLI convenience: `volume_commander <volume-url> [segment-dir]`
+    if (argc > 1) {
+        auto* root = engine.rootObjects().first();
+        if (auto* st = root->findChild<vc::AppState*>()) {
+            st->openVolume(QString::fromUtf8(argv[1]));
+            if (argc > 2) st->loadSegment(QString::fromUtf8(argv[2]));
+        }
+    }
     return app.exec();
 }

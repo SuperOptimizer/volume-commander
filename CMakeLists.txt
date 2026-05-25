@@ -17,7 +17,7 @@ add_subdirectory(${C3D_DIR}   ${CMAKE_BINARY_DIR}/c3d-build)
 add_subdirectory(${LIBS3_DIR} ${CMAKE_BINARY_DIR}/libs3-build)
 
 # --- third-party ---
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Qml)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json QUIET)
 find_package(PkgConfig REQUIRED)
