@@ -37,11 +37,20 @@
         "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON",
         "CMAKE_CXX_FLAGS_RELEASE": "-O3 -march=native -flto=thin -DNDEBUG"
       }
+    },
+    {
+      "name": "valgrind",
+      "displayName": "GCC, AVX2-only + debug info (valgrind cachegrind/callgrind)",
+      "inherits": "gcc",
+      "cacheVariables": {
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -g -mavx2 -mfma -mno-avx512f -DNDEBUG"
+      }
     }
   ],
   "buildPresets": [
     { "name": "gcc",       "configurePreset": "gcc" },
     { "name": "clang",     "configurePreset": "clang" },
-    { "name": "clang-lto", "configurePreset": "clang-lto" }
+    { "name": "clang-lto", "configurePreset": "clang-lto" },
+    { "name": "valgrind",  "configurePreset": "valgrind" }
   ]
 }

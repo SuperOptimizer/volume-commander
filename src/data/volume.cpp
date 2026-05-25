@@ -236,24 +236,33 @@ void Volume::publishChunk(const ChunkId& id, const std::uint8_t* vox, bool prese
         arena_.emplace_back(kBlocksPerChunk);
         slab = &arena_.back();
     }
-    int slabIdx = 0;
+    // Copy pass: scan the 256^3 source SEQUENTIALLY (storage order) and scatter
+    // each 16-byte x-run into its block. The old order looped blocks and read
+    // strided 16^3 sub-cubes from the chunk — cache-hostile (cachegrind: ~85%
+    // of all D1/LL read-misses). Reading the source linearly turns those into
+    // streaming hits; only the block-local writes (4 KB each, hot) scatter.
+    auto blockIndex = [](int bz, int by, int bx) {
+        return (bz * kBlocksPerChunkAxis + by) * kBlocksPerChunkAxis + bx;
+    };
+    if (present) {
+        for (int z = 0; z < kChunk; ++z) {
+            int bz = z >> 4, lz = z & 15;
+            for (int y = 0; y < kChunk; ++y) {
+                int by = y >> 4, ly = y & 15;
+                const std::uint8_t* srow = vox + (std::size_t(z) * kChunk + y) * kChunk;
+                Block* base = &(*slab)[blockIndex(bz, by, 0)];
+                for (int bx = 0; bx < kBlocksPerChunkAxis; ++bx) {
+                    std::memcpy(base[bx].v.data() + (std::size_t(lz) * kBlock + ly) * kBlock,
+                                srow + bx * kBlock, kBlock);
+                }
+            }
+        }
+    }
 
     for (int bz = 0; bz < kBlocksPerChunkAxis; ++bz)
       for (int by = 0; by < kBlocksPerChunkAxis; ++by)
         for (int bx = 0; bx < kBlocksPerChunkAxis; ++bx) {
-            const Block* blk;
-            if (!present) {
-                blk = zeroBlock_;
-            } else {
-                Block* nb = &(*slab)[slabIdx++];
-                for (int z = 0; z < kBlock; ++z)
-                  for (int y = 0; y < kBlock; ++y) {
-                    const std::uint8_t* src = vox
-                        + (std::size_t(bz*kBlock + z) * kChunk + (by*kBlock + y)) * kChunk + bx*kBlock;
-                    std::memcpy(nb->v.data() + (std::size_t(z)*kBlock + y)*kBlock, src, kBlock);
-                  }
-                blk = nb;
-            }
+            const Block* blk = present ? &(*slab)[blockIndex(bz, by, bx)] : zeroBlock_;
             // insert into lock-free table: claim an empty slot via CAS on key.
             std::uint64_t key = blockKey(id.level, b0z + bz, b0y + by, b0x + bx);
             std::size_t i = mix(key) & slotMask_;

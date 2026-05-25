@@ -8,7 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -funroll-loops -DNDEBUG")
+# Default release flags; a preset (e.g. valgrind = AVX2-only) can override by
+# setting CMAKE_CXX_FLAGS_RELEASE in its cache, so only set the default here.
+if(NOT CMAKE_CXX_FLAGS_RELEASE)
+  set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -funroll-loops -DNDEBUG")
+endif()
 
 # --- c3d volumetric codec + libs3 (vendored sibling repos by default) ---
 # Disable OpenMP entirely: c3d decode stays single-threaded; ALL parallelism
