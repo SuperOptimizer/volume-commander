@@ -125,7 +125,7 @@ ApplicationWindow {
 
                 Label { text: "Interpolation"; color: "#bbb" }
                 ComboBox { Layout.fillWidth: true
-                    model: ["nearest", "trilinear", "tricubic", "lanczos"]
+                    model: ["nearest", "trilinear"]
                     currentIndex: Math.max(0, model.indexOf(app.interpolation))
                     onActivated: app.interpolation = currentText }
 

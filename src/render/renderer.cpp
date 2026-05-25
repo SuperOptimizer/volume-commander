@@ -37,30 +37,9 @@ inline int sampleNearestLevel(Volume& vol, int level, float sx, float sy, float 
     return cur.blk->v[(std::size_t(lz) * kBlock + ly) * kBlock + lx];
 }
 
-// 4-tap separable weights at offsets {-1,0,1,2} for fractional t in [0,1).
-// Catmull-Rom cubic (tricubic) and Lanczos-2 (windowed sinc).
-inline void cubicWeights(float t, float wgt[4]) noexcept {
-    float t2 = t * t, t3 = t2 * t;
-    wgt[0] = -0.5f*t3 + t2 - 0.5f*t;
-    wgt[1] =  1.5f*t3 - 2.5f*t2 + 1.0f;
-    wgt[2] = -1.5f*t3 + 2.0f*t2 + 0.5f*t;
-    wgt[3] =  0.5f*t3 - 0.5f*t2;
-}
-inline float lanczos2(float x) noexcept {
-    if (x == 0.0f) return 1.0f;
-    if (x <= -2.0f || x >= 2.0f) return 0.0f;
-    float px = float(M_PI) * x;
-    return 2.0f * std::sin(px) * std::sin(px * 0.5f) / (px * px);
-}
-inline void lanczosWeights(float t, float wgt[4]) noexcept {
-    float w0 = lanczos2(-1.0f - t), w1 = lanczos2(-t), w2 = lanczos2(1.0f - t), w3 = lanczos2(2.0f - t);
-    float s = w0 + w1 + w2 + w3; if (s == 0.0f) s = 1.0f;
-    wgt[0]=w0/s; wgt[1]=w1/s; wgt[2]=w2/s; wgt[3]=w3/s;
-}
-
 // Adaptive sample: world coords -> value, at desiredLevel, falling back to
-// coarser levels when chunks are missing. Supports nearest / trilinear /
-// tricubic / lanczos (the last two are separable 4x4x4 kernels).
+// coarser levels when chunks are missing. Nearest or trilinear — higher-order
+// kernels add 8x the taps for ~zero visible benefit on this data.
 inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s,
                             bool& missed, BlockCursor& cur)
 {
@@ -70,11 +49,6 @@ inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s,
         float f = 1.0f / float(1 << lvl);
         float sx = w[0] * f, sy = w[1] * f, sz = w[2] * f;
 
-        if (s == Sampling::Nearest) {
-            int v = sampleNearestLevel(vol, lvl, sx, sy, sz, cur);
-            if (v < 0) continue;
-            return float(v);
-        }
         if (s == Sampling::Trilinear) {
             int x0 = int(std::floor(sx)), y0 = int(std::floor(sy)), z0 = int(std::floor(sz));
             int c[8]; bool ok = true;
@@ -90,25 +64,9 @@ inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s,
             float c00=lerp(c[0],c[1],fx), c10=lerp(c[2],c[3],fx), c01=lerp(c[4],c[5],fx), c11=lerp(c[6],c[7],fx);
             return lerp(lerp(c00,c10,fy), lerp(c01,c11,fy), fz);
         }
-        // Tricubic / Lanczos: separable 4x4x4 (offsets -1..2 per axis).
-        int x0 = int(std::floor(sx)), y0 = int(std::floor(sy)), z0 = int(std::floor(sz));
-        float wx[4], wy[4], wz[4];
-        float fx = sx-x0, fy = sy-y0, fz = sz-z0;
-        if (s == Sampling::Tricubic) { cubicWeights(fx,wx); cubicWeights(fy,wy); cubicWeights(fz,wz); }
-        else                         { lanczosWeights(fx,wx); lanczosWeights(fy,wy); lanczosWeights(fz,wz); }
-        float acc = 0.0f; bool ok = true;
-        for (int kz = 0; kz < 4 && ok; ++kz)
-          for (int ky = 0; ky < 4 && ok; ++ky) {
-            float row = 0.0f;
-            for (int kx = 0; kx < 4; ++kx) {
-                int v = sampleNearestLevel(vol, lvl, float(x0+kx-1), float(y0+ky-1), float(z0+kz-1), cur);
-                if (v < 0) { ok = false; break; }
-                row += wx[kx] * float(v);
-            }
-            acc += wy[ky] * wz[kz] * row;
-          }
-        if (!ok) continue;
-        return std::clamp(acc, 0.0f, 255.0f);
+        int v = sampleNearestLevel(vol, lvl, sx, sy, sz, cur);   // Nearest
+        if (v < 0) continue;
+        return float(v);
     }
     return 0.0f;
 }

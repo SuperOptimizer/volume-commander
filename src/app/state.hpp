@@ -76,10 +76,7 @@ public:
     void setBrushRadius(float r) { if (brushRadius_ != r) { brushRadius_ = r; emit maskPaintChanged(); } }
     void setInterpolation(const QString& m) {
         interpName_ = m;
-        sampling_ = m == "trilinear" ? Sampling::Trilinear
-                  : m == "tricubic"  ? Sampling::Tricubic
-                  : m == "lanczos"   ? Sampling::Lanczos
-                                     : Sampling::Nearest;
+        sampling_ = m == "trilinear" ? Sampling::Trilinear : Sampling::Nearest;
         bump();
     }
 
