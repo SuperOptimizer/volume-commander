@@ -72,14 +72,28 @@ ApplicationWindow {
         }
 
         Rectangle {
-            Layout.preferredWidth: 280
+            id: panel
+            property bool open: true
+            Layout.preferredWidth: open ? 280 : 28
             Layout.fillHeight: true
             color: "#262626"
+            Behavior on Layout.preferredWidth { NumberAnimation { duration: 120 } }
+
+            // Collapse / expand toggle, always visible at the panel's top-left.
+            Rectangle {
+                width: 24; height: 24; radius: 3; color: "#3a3a3a"; z: 2
+                anchors.top: parent.top; anchors.left: parent.left; anchors.margins: 4
+                Text { anchors.centerIn: parent; color: "white"; font.pixelSize: 14
+                       text: panel.open ? "⟩" : "⟨" }
+                MouseArea { anchors.fill: parent; onClicked: panel.open = !panel.open }
+            }
 
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 12
+                anchors.topMargin: 34
                 spacing: 8
+                visible: panel.open
 
                 Label { text: "volume-commander"; color: "white"; font.bold: true; font.pixelSize: 16 }
 
@@ -108,6 +122,12 @@ ApplicationWindow {
                 Slider { Layout.fillWidth: true; from: 0; to: 64; stepSize: 1; value: app.layersBehind; onMoved: app.layersBehind = value }
                 ComboBox { Layout.fillWidth: true; model: ["mean", "max", "min", "alpha"]
                     onActivated: app.compositeMethod = currentText }
+
+                Label { text: "Interpolation"; color: "#bbb" }
+                ComboBox { Layout.fillWidth: true
+                    model: ["nearest", "trilinear", "tricubic", "lanczos"]
+                    currentIndex: Math.max(0, model.indexOf(app.interpolation))
+                    onActivated: app.interpolation = currentText }
 
                 CheckBox { text: "Raking light"; checked: app.rakingEnabled; onToggled: app.rakingEnabled = checked }
                 CheckBox { text: "CLAHE"; checked: app.claheEnabled; onToggled: app.claheEnabled = checked }

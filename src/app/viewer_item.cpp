@@ -139,6 +139,7 @@ void ViewerItem::dispatchRender()
     snap->composite = state_->composite();
     snap->windowLow = state_->windowLow();
     snap->windowHigh = state_->windowHigh();
+    snap->sampling = state_->sampling();
     snap->mask = state_->mask();
 
     QThreadPool::globalInstance()->start([this, snap, w, h] {

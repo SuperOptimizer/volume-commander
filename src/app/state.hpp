@@ -9,6 +9,7 @@
 #include "data/mask.hpp"
 #include "render/surface.hpp"
 #include "render/compositing.hpp"
+#include "render/renderer.hpp"
 
 namespace vc {
 
@@ -29,6 +30,7 @@ class AppState : public QObject {
     Q_PROPERTY(bool rakingEnabled READ rakingEnabled WRITE setRakingEnabled NOTIFY renderChanged)
     Q_PROPERTY(bool claheEnabled READ claheEnabled WRITE setClaheEnabled NOTIFY renderChanged)
     Q_PROPERTY(bool maskPaint READ maskPaint WRITE setMaskPaint NOTIFY maskPaintChanged)
+    Q_PROPERTY(QString interpolation READ interpolation WRITE setInterpolation NOTIFY renderChanged)
     Q_PROPERTY(float brushRadius READ brushRadius WRITE setBrushRadius NOTIFY maskPaintChanged)
 
 public:
@@ -59,6 +61,8 @@ public:
     bool claheEnabled() const { return composite_.postClaheEnabled; }
     bool maskPaint() const { return maskPaint_; }
     float brushRadius() const { return brushRadius_; }
+    Sampling sampling() const { return sampling_; }
+    QString interpolation() const { return interpName_; }
 
     void setWindowLow(float v) { windowLow_ = v; bump(); }
     void setWindowHigh(float v) { windowHigh_ = v; bump(); }
@@ -70,6 +74,14 @@ public:
     void setClaheEnabled(bool e) { composite_.postClaheEnabled = e; bump(); }
     void setMaskPaint(bool e) { if (maskPaint_ != e) { maskPaint_ = e; emit maskPaintChanged(); } }
     void setBrushRadius(float r) { if (brushRadius_ != r) { brushRadius_ = r; emit maskPaintChanged(); } }
+    void setInterpolation(const QString& m) {
+        interpName_ = m;
+        sampling_ = m == "trilinear" ? Sampling::Trilinear
+                  : m == "tricubic"  ? Sampling::Tricubic
+                  : m == "lanczos"   ? Sampling::Lanczos
+                                     : Sampling::Nearest;
+        bump();
+    }
 
 signals:
     void volumeChanged();
@@ -85,6 +97,8 @@ private:
     std::shared_ptr<QuadSurface> segment_;
     std::shared_ptr<MaskVolume> mask_;   // 3D binary label mask (lazily created)
     float brushRadius_ = 3.0f;
+    Sampling sampling_ = Sampling::Nearest;
+    QString interpName_ = "nearest";
     CompositeRenderSettings composite_;
     QString methodName_ = "mean";
     QString volumeUrl_, segmentDir_;

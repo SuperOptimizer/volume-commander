@@ -13,7 +13,7 @@
 
 namespace vc {
 
-enum class Sampling : std::uint8_t { Nearest, Trilinear };
+enum class Sampling : std::uint8_t { Nearest, Trilinear, Tricubic, Lanczos };
 
 // Build a 256-entry ARGB grayscale LUT for window/level.
 std::array<std::uint32_t, 256> grayLut(float winLow, float winHigh);
