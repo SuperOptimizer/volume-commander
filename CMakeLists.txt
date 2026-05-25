@@ -22,6 +22,7 @@ find_package(CURL REQUIRED)
 find_package(nlohmann_json QUIET)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(BLOSC2 IMPORTED_TARGET blosc2)
+pkg_check_modules(TIFF REQUIRED IMPORTED_TARGET libtiff-4)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
 

@@ -2,6 +2,7 @@
 set(VC_SOURCES
   app/main.cpp
   data/volume.cpp
+  render/surface.cpp
   utils/c3d_codec.cpp
 )
 
@@ -16,6 +17,7 @@ target_link_libraries(volume_commander PRIVATE
   Qt6::Core Qt6::Gui Qt6::Widgets
   ZLIB::ZLIB
   Threads::Threads
+  PkgConfig::TIFF
   c3d
   s3
 )
