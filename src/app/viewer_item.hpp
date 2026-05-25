@@ -66,6 +66,7 @@ private:
     bool painting_ = false;
     bool eraseStroke_ = false;
     QTimer* refineTimer_ = nullptr;
+    QTimer* zoomTimer_ = nullptr;
 };
 
 }  // namespace vc

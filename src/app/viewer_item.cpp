@@ -183,7 +183,14 @@ void ViewerItem::wheelEvent(QWheelEvent* e)
         camera_.zoom(steps);
         if (state_ && state_->volume()) camera_.recalcLevel(state_->volume()->numLevels());
     }
-    scheduleRender();
+    // Coalesce a burst of wheel ticks into one render (debounced); the camera
+    // is already updated so the eventual render reflects the final zoom.
+    if (!zoomTimer_) {
+        zoomTimer_ = new QTimer(this);
+        zoomTimer_->setSingleShot(true);
+        connect(zoomTimer_, &QTimer::timeout, this, [this] { scheduleRender(); });
+    }
+    zoomTimer_->start(16);
 }
 
 }  // namespace vc
