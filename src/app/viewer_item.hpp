@@ -5,6 +5,7 @@
 #include <QPointF>
 #include <QTimer>
 #include <atomic>
+#include <chrono>
 #include <memory>
 
 #include "render/renderer.hpp"
@@ -51,7 +52,8 @@ protected:
 
 private:
     void rebuildSurface();
-    void scheduleRender();     // dispatch a render to a worker thread (never blocks GUI)
+    void scheduleRender();     // 60fps-coalescing gate (all triggers call this)
+    void dispatchRender();     // actually dispatch a render to a worker thread
     bool worldAt(QPointF pos, Vec3f& out) const;  // screen px -> world voxel
 
     AppState* state_ = nullptr;
@@ -67,6 +69,11 @@ private:
     bool eraseStroke_ = false;
     QTimer* refineTimer_ = nullptr;
     QTimer* zoomTimer_ = nullptr;
+    QTimer* idleTimer_ = nullptr;
+    QTimer* frameTimer_ = nullptr;
+    std::chrono::steady_clock::time_point lastDispatch_{};
+    bool interactive_ = false;
+    void beginInteraction();   // mark interactive (low-res), arm idle->full-res
 };
 
 }  // namespace vc

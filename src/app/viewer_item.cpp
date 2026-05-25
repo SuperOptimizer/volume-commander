@@ -80,11 +80,51 @@ void ViewerItem::rebuildSurface()
     camera_.recalcLevel(state_->volume()->numLevels());
 }
 
+void ViewerItem::beginInteraction()
+{
+    interactive_ = true;
+    if (!idleTimer_) {
+        idleTimer_ = new QTimer(this);
+        idleTimer_->setSingleShot(true);
+        connect(idleTimer_, &QTimer::timeout, this, [this] {
+            interactive_ = false;   // motion stopped -> one full-res render
+            scheduleRender();
+        });
+    }
+    idleTimer_->start(140);
+}
+
+// 60fps coalescing gate. Every trigger (pan, zoom, refine, settings) calls
+// this; it dispatches at most one render per 16ms. An input storm (mouseMove
+// faster than 60Hz) collapses to <=60 renders/sec instead of queueing.
 void ViewerItem::scheduleRender()
 {
-    const int w = int(width()), h = int(height());
+    using namespace std::chrono;
+    auto now = steady_clock::now();
+    double sinceMs = duration<double, std::milli>(now - lastDispatch_).count();
+    if (sinceMs >= 16.0) { lastDispatch_ = now; dispatchRender(); return; }
+    if (!frameTimer_) {
+        frameTimer_ = new QTimer(this);
+        frameTimer_->setSingleShot(true);
+        connect(frameTimer_, &QTimer::timeout, this, [this] {
+            lastDispatch_ = steady_clock::now(); dispatchRender();
+        });
+    }
+    if (!frameTimer_->isActive()) frameTimer_->start(int(16.0 - sinceMs) + 1);
+}
+
+void ViewerItem::dispatchRender()
+{
+    int w = int(width()), h = int(height());
     if (!state_ || !surface_ || !state_->volume() || w <= 0 || h <= 0) return;
     if (busy_.exchange(true)) { pending_ = true; return; }   // one render in flight
+
+    // Interactive downscale: while panning/zooming, render at 1/2 res (4x fewer
+    // samples) for a responsive feel, then a full-res pass once motion stops
+    // (idle timer below). paint() scales the framebuffer to the item rect.
+    int ds = interactive_ ? 2 : 1;
+    w = std::max(1, w / ds);
+    h = std::max(1, h / ds);
 
     // Immutable snapshot for the worker — GUI thread mutates camera_ freely.
     auto snap = std::make_shared<RenderInput>();
@@ -121,6 +161,10 @@ void ViewerItem::onFrameReady(QImage img, bool /*missed*/)
 void ViewerItem::paint(QPainter* p)
 {
     if (image_.isNull()) { p->fillRect(boundingRect(), Qt::black); return; }
+    if (image_.width() != int(width()) || image_.height() != int(height())) {
+        p->drawImage(boundingRect(), image_);   // scale downscaled frame to fill
+        return;
+    }
     p->drawImage(0, 0, image_);
 }
 
@@ -179,6 +223,7 @@ void ViewerItem::mouseMoveEvent(QMouseEvent* e)
         camera_.surfacePtr[0] -= float(d.x() * inv);
         camera_.surfacePtr[1] -= float(d.y() * inv);
     }
+    beginInteraction();
     scheduleRender();
 }
 
@@ -198,14 +243,8 @@ void ViewerItem::wheelEvent(QWheelEvent* e)
         camera_.zoom(steps);
         if (state_ && state_->volume()) camera_.recalcLevel(state_->volume()->numLevels());
     }
-    // Coalesce a burst of wheel ticks into one render (debounced); the camera
-    // is already updated so the eventual render reflects the final zoom.
-    if (!zoomTimer_) {
-        zoomTimer_ = new QTimer(this);
-        zoomTimer_->setSingleShot(true);
-        connect(zoomTimer_, &QTimer::timeout, this, [this] { scheduleRender(); });
-    }
-    zoomTimer_->start(16);
+    beginInteraction();      // low-res while zooming; idle timer does full-res
+    scheduleRender();        // 60fps gate coalesces the wheel burst
 }
 
 }  // namespace vc
