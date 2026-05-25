@@ -21,18 +21,23 @@ struct BlockCursor {
 };
 
 // One voxel at level L, nearest. Returns -1 if the block isn't resident.
-inline int sampleNearestLevel(Volume& vol, int level, float sx, float sy, float sz, BlockCursor& cur)
+// Hot path (consecutive samples in the same 16^3 block — the common case along
+// a composite ray and across adjacent pixels) is a 4-int compare + a direct
+// array index, no call into Volume. Only a block transition calls vol.block().
+[[gnu::always_inline]] inline int
+sampleNearestLevel(Volume& vol, int level, float sx, float sy, float sz, BlockCursor& cur)
 {
     int ix = int(sx + 0.5f), iy = int(sy + 0.5f), iz = int(sz + 0.5f);
-    auto shp = vol.shape(level);
-    if (ix < 0 || iy < 0 || iz < 0 || iz >= shp[0] || iy >= shp[1] || ix >= shp[2]) return 0;
     int bz = iz >> 4, by = iy >> 4, bx = ix >> 4;
-    if (!(level == cur.level && bz == cur.bz && by == cur.by && bx == cur.bx)) {
+    if (level != cur.level || bz != cur.bz || by != cur.by || bx != cur.bx) [[unlikely]] {
+        auto shp = vol.shape(level);
+        if (ix < 0 || iy < 0 || iz < 0 || iz >= shp[0] || iy >= shp[1] || ix >= shp[2]) return 0;
         cur.level = level; cur.bz = bz; cur.by = by; cur.bx = bx;
-        cur.blk = vol.block(level, bz, by, bx);   // the only locked call
-        if (!cur.blk) cur.hadMiss = true;
+        cur.blk = vol.block(level, bz, by, bx);
+        if (!cur.blk) { cur.hadMiss = true; return -1; }
+    } else if (!cur.blk) {
+        return -1;   // same (missing) block as last sample
     }
-    if (!cur.blk) return -1;
     int lz = iz & 15, ly = iy & 15, lx = ix & 15;
     return cur.blk->v[(std::size_t(lz) * kBlock + ly) * kBlock + lx];
 }
