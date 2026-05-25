@@ -49,6 +49,17 @@ if(BLOSC2_FOUND)
   target_link_libraries(replay PRIVATE PkgConfig::BLOSC2)
 endif()
 
+# mirror: copy the S3 shards a trace touches into a local zarr (one-time, for
+# fully-offline replay/tests).
+add_executable(mirror bench/mirror.cpp
+  src/data/volume.cpp src/data/mask.cpp
+  src/render/surface.cpp src/render/renderer.cpp src/utils/c3d_codec.cpp)
+target_include_directories(mirror PRIVATE src)
+target_link_libraries(mirror PRIVATE ZLIB::ZLIB Threads::Threads PkgConfig::TIFF c3d s3)
+if(BLOSC2_FOUND)
+  target_link_libraries(mirror PRIVATE PkgConfig::BLOSC2)
+endif()
+
 # Self-contained unit tests (no S3). `ctest` or run ./build/test_render.
 enable_testing()
 add_executable(test_render tests/test_render.cpp src/render/surface.cpp src/utils/c3d_codec.cpp)
