@@ -39,7 +39,13 @@ static std::string str(const std::string& s, const char* key) {
 
 int main(int argc, char** argv)
 {
-    if (argc < 3) { std::println(stderr, "usage: replay <trace.jsonl> <volume-url> [segment-url]"); return 1; }
+    if (argc < 3) {
+        std::println(stderr, "usage: replay <trace.jsonl> <volume-url> [segment-url] [passes] [stride]");
+        std::println(stderr, "  passes default 1; stride N uses every Nth frame (default 1 = all)");
+        return 1;
+    }
+    const int passes = argc > 4 ? std::atoi(argv[4]) : 1;
+    const int stride = argc > 5 ? std::max(1, std::atoi(argv[5])) : 1;
     auto vol = Volume::open(argv[2]);
     if (!vol) { std::println(stderr, "open volume failed"); return 1; }
     std::shared_ptr<QuadSurface> seg;
@@ -56,8 +62,10 @@ int main(int argc, char** argv)
     struct Frame { RenderInput in; int w, h; std::string view; };
     std::vector<Frame> frames;
     std::string line;
+    int lineNo = 0;
     while (std::getline(in, line)) {
         if (line.size() < 5) continue;
+        if (lineNo++ % stride != 0) continue;   // subsample for a quick run
         Frame fr;
         fr.view = str(line, "view");
         fr.w = int(num(line, "w")); fr.h = int(num(line, "h"));
@@ -92,7 +100,6 @@ int main(int argc, char** argv)
     Tensor32 fb;
     for (auto& f : frames) renderSurface(fb, f.w, f.h, f.in);
 
-    const int passes = 3;
     std::vector<double> times;
     times.reserve(frames.size() * passes);
     auto t0 = Clock::now();
