@@ -104,7 +104,7 @@ std::array<std::uint32_t, 256> grayLut(float lo, float hi)
 
 bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
 {
-    fb.create({h, w});
+    fb.createUninit({h, w});
     if (!in.surf || !in.volume) { std::fill(fb.data.begin(), fb.data.end(), 0xFF000000u); return false; }
     Volume& vol = *in.volume;
     bool missed = false;
@@ -131,7 +131,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
     const int lvl = in.camera.dsIdx;
     auto lut = grayLut(in.windowLow, in.windowHigh);
 
-    TensorU8 gray(h, w);
+    TensorU8 gray; gray.createUninit({h, w});   // every pixel written below
 
     // Tiled parallel render. Threads pull 64x64 output tiles from a shared
     // atomic counter (work-stealing — balances load when some tiles are empty

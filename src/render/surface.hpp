@@ -51,8 +51,8 @@ struct PlaneSurface : Surface {
     {
         const float inv = 1.0f / scale;
         Vec3f o = origin + ptr + normal * zOff;   // slice along the view axis
-        if (coords) coords->create({h, w});
-        if (normals) normals->create({h, w});
+        if (coords) coords->createUninit({h, w});
+        if (normals) normals->createUninit({h, w});
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) {
                 float fx = (x - w * 0.5f) * inv;

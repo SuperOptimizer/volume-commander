@@ -94,6 +94,16 @@ struct Tensor {
     void create(std::vector<int> shp) {
         if (shp != shape) reshape(std::move(shp));
     }
+    // Like create() but does NOT zero — for buffers the caller fully overwrites
+    // (render framebuffers, coord/normal grids). Skips a big per-frame memset.
+    void createUninit(std::vector<int> shp) {
+        if (shp == shape) return;
+        shape = std::move(shp);
+        stride.resize(shape.size());
+        std::size_t s = 1;
+        for (int i = int(shape.size()) - 1; i >= 0; --i) { stride[i] = s; s *= std::size_t(shape[i]); }
+        data.resize(s);   // grows uninitialized for trivial T; reused if same size
+    }
 
     bool empty() const noexcept { return data.empty(); }
     void clear() noexcept { shape.clear(); stride.clear(); data.clear(); }

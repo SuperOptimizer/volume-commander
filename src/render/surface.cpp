@@ -161,8 +161,8 @@ Vec3f QuadSurface::normalAt(Vec3f ptr) const
 void QuadSurface::gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
                       Vec3f ptr, float scale, float zOff, Vec3f zOffDir) const
 {
-    if (coords) coords->create({h, w});
-    if (normals) normals->create({h, w});
+    if (coords) coords->createUninit({h, w});
+    if (normals) normals->createUninit({h, w});
     const int gh = points.rows(), gw = points.cols();
     if (gh < 2 || gw < 2) return;
 
