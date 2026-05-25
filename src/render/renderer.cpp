@@ -174,15 +174,32 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
                     Vec3f base = coords(y, x);
                     if (base[0] == QuadSurface::kInvalid || !std::isfinite(base[0])) { gray(y, x) = 0; continue; }
                     Vec3f nrm = normals(y, x);
-                    // Walk the ray once, folding each sample into the streaming
-                    // compositor (no per-pixel buffer; alpha can early-out).
                     Compositor comp(cp);
                     const float iso = float(cp.isoCutoff);
-                    Vec3f p = base + nrm * float(zStart);
-                    for (int li = 0; li < nLayers; ++li, p += nrm) {
-                        float v = sampleAdaptive(vol, lvl, p, samp, miss, cur);
-                        if (v < iso) v = 0.0f;
-                        if (!comp.add(v)) break;
+                    if (samp == Sampling::Nearest) [[likely]] {
+                        // Fast composite path: walk the ray in level-scaled space
+                        // by incremental add (q += d), no per-sample multiply.
+                        const float f = 1.0f / float(1 << lvl);
+                        Vec3f q = (base + nrm * float(zStart)) * f;
+                        const Vec3f d = nrm * f;
+                        for (int li = 0; li < nLayers; ++li, q += d) {
+                            int v = sampleNearestLevel(vol, lvl, q[0], q[1], q[2], cur);
+                            if (v < 0) {            // not resident at this level
+                                missed = true;
+                                Vec3f w = base + nrm * float(zStart + li);
+                                v = int(sampleAdaptive(vol, lvl + 1, w, samp, miss, cur));
+                                cur.level = -1;     // sampleAdaptive used cur at other levels
+                            }
+                            float fv = float(v) < iso ? 0.0f : float(v);
+                            if (!comp.add(fv)) break;
+                        }
+                    } else {
+                        Vec3f p = base + nrm * float(zStart);
+                        for (int li = 0; li < nLayers; ++li, p += nrm) {
+                            float v = sampleAdaptive(vol, lvl, p, samp, miss, cur);
+                            if (v < iso) v = 0.0f;
+                            if (!comp.add(v)) break;
+                        }
                     }
                     float val = comp.value();
                     if (cp.lightingEnabled) val *= computeLightingFactor(nrm, cp);
