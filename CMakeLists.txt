@@ -33,3 +33,14 @@ find_package(Threads REQUIRED)
 qt_standard_project_setup()
 
 add_subdirectory(src)
+
+# Headless render benchmark (no Qt) — replays a VC_TRACE frame log.
+add_executable(replay bench/replay.cpp
+  src/data/volume.cpp src/data/mask.cpp
+  src/render/surface.cpp src/render/renderer.cpp
+  src/utils/c3d_codec.cpp)
+target_include_directories(replay PRIVATE src)
+target_link_libraries(replay PRIVATE ZLIB::ZLIB Threads::Threads PkgConfig::TIFF c3d s3)
+if(BLOSC2_FOUND)
+  target_link_libraries(replay PRIVATE PkgConfig::BLOSC2)
+endif()

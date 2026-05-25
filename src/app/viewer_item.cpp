@@ -5,6 +5,8 @@
 #include <QWheelEvent>
 #include <QThreadPool>
 
+#include "app/trace.hpp"
+
 namespace vc {
 
 ViewerItem::ViewerItem(QQuickItem* parent) : QQuickPaintedItem(parent)
@@ -141,6 +143,9 @@ void ViewerItem::dispatchRender()
     snap->windowHigh = state_->windowHigh();
     snap->sampling = state_->sampling();
     snap->mask = state_->mask();
+
+    if (FrameTrace::instance().enabled())
+        FrameTrace::instance().log(viewName_.toUtf8().constData(), w, h, *snap);
 
     QThreadPool::globalInstance()->start([this, snap, w, h] {
         Tensor32 fb;
