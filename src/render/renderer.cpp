@@ -111,7 +111,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
 
     Tensor3f coords, normals;
     in.surf->gen(&coords, &normals, w, h, in.camera.surfacePtr, in.camera.scale,
-                 in.camera.zOff);
+                 in.camera.zOff, in.camera.zOffDir);
 
     const auto& cs = in.composite;
     const auto& cp = cs.params;

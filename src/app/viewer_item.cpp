@@ -188,7 +188,7 @@ bool ViewerItem::worldAt(QPointF pos, Vec3f& out) const
     int px = std::clamp(int(pos.x()), 0, std::max(0, w - 1));
     int py = std::clamp(int(pos.y()), 0, std::max(0, h - 1));
     Tensor3f coords;
-    surface_->gen(&coords, nullptr, w, h, camera_.surfacePtr, camera_.scale, camera_.zOff);
+    surface_->gen(&coords, nullptr, w, h, camera_.surfacePtr, camera_.scale, camera_.zOff, camera_.zOffDir);
     if (coords.empty()) return false;
     Vec3f c = coords(py, px);
     if (c[0] == QuadSurface::kInvalid || !std::isfinite(c[0])) return false;
@@ -250,7 +250,16 @@ void ViewerItem::wheelEvent(QWheelEvent* e)
     int steps = e->angleDelta().y() / 120;
     if (!steps) return;
     if (e->modifiers() & Qt::ShiftModifier) {
+        // Capture the push direction ONCE (at the first scroll off zero) from
+        // the surface normal at view center; hold it fixed so later pans don't
+        // reshape the sheet. Plane views ignore zOffDir (gen uses their normal).
+        if (camera_.zOff == 0.0f && !surface_->isPlane()) {
+            auto* qs = static_cast<QuadSurface*>(surface_.get());
+            Vec3f n = qs->normalAt(camera_.surfacePtr);
+            if (vc::norm(n) > 1e-6f) camera_.zOffDir = n;
+        }
         camera_.zOff += float(steps);      // slice through normal
+        if (camera_.zOff == 0.0f) camera_.zOffDir = {0, 0, 0};
     } else {
         camera_.zoom(steps);
         if (state_ && state_->volume()) camera_.recalcLevel(state_->volume()->numLevels());

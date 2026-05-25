@@ -13,6 +13,11 @@ struct Camera {
     Vec3f surfacePtr{0, 0, 0};
     float scale = 1.0f;          // 1 volume voxel (at level 0) per window pixel
     float zOff = 0.0f;          // normal-offset slice navigation
+    // Fixed world-space push direction for the flattened-view z-offset.
+    // Captured ONCE per shift+scroll (the surface normal at view center) and
+    // held constant across pans — otherwise panning to a differently-curved
+    // part of the sheet would change the normal and shift the whole surface.
+    Vec3f zOffDir{0, 0, 0};
     int   dsIdx = 0;            // pyramid level index
     float dsScale = 1.0f;       // 1 / 2^dsIdx
 

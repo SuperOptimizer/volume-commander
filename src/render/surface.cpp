@@ -145,8 +145,21 @@ Vec3f QuadSurface::pointer() const
     return {points.cols() * 0.5f, points.rows() * 0.5f, 0};
 }
 
+Vec3f QuadSurface::normalAt(Vec3f ptr) const
+{
+    const int gh = points.rows(), gw = points.cols();
+    int ix = int(std::floor(ptr[0])), iy = int(std::floor(ptr[1]));
+    if (ix < 0 || iy < 0 || ix >= gw - 1 || iy >= gh - 1) return {0, 0, 0};
+    const Vec3f& p00 = points(iy, ix);
+    const Vec3f& p10 = points(iy, ix + 1);
+    const Vec3f& p01 = points(iy + 1, ix);
+    auto ok = [](const Vec3f& v){ return v[0] != kInvalid && std::isfinite(v[0]); };
+    if (!(ok(p00) && ok(p10) && ok(p01))) return {0, 0, 0};
+    return normalized(cross(p10 - p00, p01 - p00));
+}
+
 void QuadSurface::gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-                      Vec3f ptr, float scale, float zOff) const
+                      Vec3f ptr, float scale, float zOff, Vec3f zOffDir) const
 {
     if (coords) coords->create({h, w});
     if (normals) normals->create({h, w});
@@ -177,13 +190,18 @@ void QuadSurface::gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
         return true;
     };
 
-    // Rigid z-push: shift the whole sheet along the normal at the view center
-    // (VC3D's flattened shift+scroll). One direction for the frame so the push
-    // is rigid — no per-pixel curvature drift.
+    // Rigid z-push along a FIXED world direction. The direction comes from the
+    // caller (captured once at shift+scroll time) so panning to a differently-
+    // curved part of the sheet doesn't change it. Fall back to the center
+    // normal only if the caller didn't supply one.
     Vec3f pushDir{0, 0, 0};
     if (zOff != 0.0f) {
-        Vec3f cw, cn;
-        if (sampleGrid(cx, cy, cw, cn)) pushDir = cn * zOff;
+        Vec3f dir = zOffDir;
+        if (dir[0] == 0.0f && dir[1] == 0.0f && dir[2] == 0.0f) {
+            Vec3f cw, cn;
+            if (sampleGrid(cx, cy, cw, cn)) dir = cn;
+        }
+        pushDir = dir * zOff;
     }
 
     for (int y = 0; y < h; ++y) {

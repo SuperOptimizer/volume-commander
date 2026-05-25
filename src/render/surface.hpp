@@ -16,9 +16,11 @@ struct Surface {
     virtual ~Surface() = default;
     // zOff: shift the sampled sheet along its normal by zOff world voxels
     // (shift+scroll). Plane: moves the slice in/out along the view axis.
-    // Quad: rigidly pushes the flattened surface forward/backward.
+    // Quad: rigidly pushes the surface along zOffDir (a FIXED world direction
+    // captured at scroll time; if zero, gen samples the center normal). Passing
+    // a fixed dir keeps the push rigid so panning doesn't reshape the surface.
     virtual void gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-                     Vec3f ptr, float scale, float zOff) const = 0;
+                     Vec3f ptr, float scale, float zOff, Vec3f zOffDir = {0,0,0}) const = 0;
     virtual Vec3f pointer() const { return {0, 0, 0}; }
     virtual bool isPlane() const { return false; }
 };
@@ -45,7 +47,7 @@ struct PlaneSurface : Surface {
     }
 
     void gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-             Vec3f ptr, float scale, float zOff) const override
+             Vec3f ptr, float scale, float zOff, Vec3f = {0,0,0}) const override
     {
         const float inv = 1.0f / scale;
         Vec3f o = origin + ptr + normal * zOff;   // slice along the view axis
@@ -76,8 +78,10 @@ struct QuadSurface : Surface {
     static std::shared_ptr<QuadSurface> load(const std::string& tifxyzDir);
 
     void gen(Tensor3f* coords, Tensor3f* normals, int w, int h,
-             Vec3f ptr, float scale, float zOff) const override;
+             Vec3f ptr, float scale, float zOff, Vec3f zOffDir = {0,0,0}) const override;
     Vec3f pointer() const override;
+    // Surface normal at a grid-coord view center (for capturing zOffDir).
+    Vec3f normalAt(Vec3f ptr) const;
 };
 
 }  // namespace vc
