@@ -121,7 +121,10 @@ void ViewerItem::dispatchRender()
 
     // Interactive downscale: while panning/zooming, render at 1/2 res (4x fewer
     // samples) for a responsive feel, then a full-res pass once motion stops
-    // (idle timer below). paint() scales the framebuffer to the item rect.
+    // (idle timer below). paint() scales the framebuffer up to the item rect.
+    // Both the pixel dims AND the camera scale are divided by ds, so the
+    // half-res frame covers the SAME world area (fewer pixels, same extent) —
+    // otherwise it would appear zoomed in and "pop" back on release.
     int ds = interactive_ ? 2 : 1;
     w = std::max(1, w / ds);
     h = std::max(1, h / ds);
@@ -132,6 +135,7 @@ void ViewerItem::dispatchRender()
     snap->surfHold = surface_;          // keep alive across the worker run
     snap->volume = state_->volume();
     snap->camera = camera_;
+    snap->camera.scale = camera_.scale / float(ds);
     snap->composite = state_->composite();
     snap->windowLow = state_->windowLow();
     snap->windowHigh = state_->windowHigh();
