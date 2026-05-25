@@ -26,7 +26,6 @@ target_link_libraries(volume_commander PRIVATE
   ZLIB::ZLIB
   Threads::Threads
   PkgConfig::TIFF
-  OpenMP::OpenMP_CXX
   c3d
   s3
 )

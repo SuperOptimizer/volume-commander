@@ -18,11 +18,15 @@ struct Camera {
 
     static constexpr float kMin = 0.01f, kMax = 10.0f;
 
-    // Coarsest level whose voxels are still finer than one output pixel.
+    // Pyramid level for the current zoom. One output pixel should map to one
+    // level-L voxel, so level L covers zoom in (0.5^L, 0.5^(L-1)]:
+    //   scale >= 1     -> 0   (full res)
+    //   0.5  .. 1      -> 1
+    //   0.25 .. 0.5    -> 2
+    //   0.125.. 0.25   -> 3   ... i.e. L = ceil(-log2(scale)).
     void recalcLevel(int numLevels) noexcept {
         int lvl = 0;
-        // each level is 2x coarser; pick so that (1/2^lvl) >= scale isn't over-zoomed
-        while (lvl + 1 < numLevels && (1.0f / float(1 << (lvl + 1))) >= scale) ++lvl;
+        if (scale < 1.0f) lvl = int(std::ceil(-std::log2(scale)));
         dsIdx = std::clamp(lvl, 0, numLevels - 1);
         dsScale = 1.0f / float(1 << dsIdx);
     }

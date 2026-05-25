@@ -25,14 +25,19 @@ void ViewerItem::setState(AppState* s)
         connect(state_, &AppState::renderChanged, this, [this] { rebuildSurface(); scheduleRender(); });
         connect(state_, &AppState::volumeChanged, this, [this] { rebuildSurface(); scheduleRender(); });
         connect(state_, &AppState::segmentChanged, this, [this] { rebuildSurface(); scheduleRender(); });
-        // chunks streaming in -> coalesced refine (don't re-render per chunk)
+        // Progressive refinement: when a queued chunk finishes decoding into
+        // the block cache, re-render so the visible region sharpens to its
+        // best resident level. Coalesced (one re-render per burst of arrivals)
+        // so streaming many chunks doesn't fire a render each. This converges
+        // — it stops re-rendering once no new chunks land — because the level
+        // selection bounds demand to what the current zoom needs.
         connect(state_, &AppState::chunkArrived, this, [this] {
             if (!refineTimer_) {
                 refineTimer_ = new QTimer(this);
                 refineTimer_->setSingleShot(true);
                 connect(refineTimer_, &QTimer::timeout, this, [this] { scheduleRender(); });
             }
-            if (!refineTimer_->isActive()) refineTimer_->start(80);
+            if (!refineTimer_->isActive()) refineTimer_->start(60);
         });
     }
     emit stateChanged();
@@ -64,6 +69,13 @@ void ViewerItem::rebuildSurface()
         auto pl = std::make_shared<PlaneSurface>(c, n);
         surface_ = pl;
         camera_.surfacePtr = {0, 0, 0};
+        // Default zoom: fit the whole in-plane extent into the viewport, so we
+        // open at the COARSEST pyramid level (few chunks) instead of level 0.
+        int W = std::max(1, int(width())), H = std::max(1, int(height()));
+        float extentX = float(viewName_ == "yz" ? shp[1] : shp[2]);   // in-plane width (voxels)
+        float extentY = float(viewName_ == "xy" ? shp[1] : shp[0]);   // in-plane height
+        float fit = std::min(W / extentX, H / extentY);
+        camera_.scale = Camera::roundScale(fit > 0 ? fit : 0.01f);
     }
     camera_.recalcLevel(state_->volume()->numLevels());
 }
@@ -87,20 +99,23 @@ void ViewerItem::scheduleRender()
 
     QThreadPool::globalInstance()->start([this, snap, w, h] {
         Tensor32 fb;
-        renderSurface(fb, w, h, *snap);
+        bool missed = renderSurface(fb, w, h, *snap);
         QImage img(w, h, QImage::Format_ARGB32);
         for (int y = 0; y < h; ++y)
             std::memcpy(img.scanLine(y), fb.row(y), std::size_t(w) * 4);
-        emit frameReady(img);   // queued (see ctor connect) -> onFrameReady on GUI thread
+        emit frameReady(img, missed);  // queued -> onFrameReady on GUI thread
     });
 }
 
-void ViewerItem::onFrameReady(QImage img)
+void ViewerItem::onFrameReady(QImage img, bool /*missed*/)
 {
     image_ = std::move(img);
     busy_.store(false);
     update();
     if (pending_) { pending_ = false; scheduleRender(); }
+    // No refine loop. We rendered the best data available (camera level, else
+    // coarser, else black) and queued any missing blocks. When the IO pool
+    // finishes one, Volume fires chunkArrived -> a single re-render. Done.
 }
 
 void ViewerItem::paint(QPainter* p)

@@ -37,10 +37,10 @@ public:
 signals:
     void stateChanged();
     void viewChanged();
-    void frameReady(QImage img);   // emitted from worker; queued to GUI thread
+    void frameReady(QImage img, bool missed);  // emitted from worker; queued to GUI thread
 
 private slots:
-    void onFrameReady(QImage img);
+    void onFrameReady(QImage img, bool missed);
 
 protected:
     void mousePressEvent(QMouseEvent*) override;

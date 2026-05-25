@@ -33,7 +33,9 @@ struct RenderInput {
 // Render `surf` through `volume` into an ARGB framebuffer (w*h, row-major).
 // Walks composite layers along the surface normal, applies the composite
 // method + optional Lambertian light, then post-process + LUT.
-void renderSurface(Tensor32& fb, int w, int h, const RenderInput& in);
+// Returns true if any pixel fell back to a coarser level (data still
+// streaming) — caller should schedule one more refine render.
+bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in);
 
 // Post-process passes on a grayscale buffer in place (before LUT).
 void postStretch(TensorU8& g);

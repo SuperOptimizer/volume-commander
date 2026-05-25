@@ -242,8 +242,12 @@ void Volume::evictLocked()
             store_.erase(it);
         }
         map_.erase(old);
-        // Note: parent chunk stays in haveChunk_; a re-touch re-queues + re-splits.
-        // Acceptable: eviction only under memory pressure.
+        // Evicting a block means its parent chunk is no longer fully resident;
+        // drop the haveChunk_ mark so a future touch can re-queue + re-split.
+        // Without this, block() queues the chunk, queueChunk sees haveChunk_,
+        // skips, returns nullptr forever -> permanent miss -> infinite refine.
+        haveChunk_.erase(ChunkId{old.level,
+            old.bz / kBlocksPerChunkAxis, old.by / kBlocksPerChunkAxis, old.bx / kBlocksPerChunkAxis});
     }
 }
 

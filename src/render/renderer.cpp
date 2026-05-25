@@ -22,10 +22,12 @@ inline int sampleNearestLevel(Volume& vol, int level, float sx, float sy, float 
 
 // Adaptive sample: world coords -> value, starting at desiredLevel and
 // falling back to coarser levels when chunks are missing.
-inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s)
+inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s, bool& missed)
 {
     const int n = vol.numLevels();
     for (int lvl = desiredLevel; lvl < n; ++lvl) {
+        // fell back past the desired level -> a finer render is still pending
+        if (lvl > desiredLevel) missed = true;
         float f = 1.0f / float(1 << lvl);
         float sx = w[0] * f, sy = w[1] * f, sz = w[2] * f;
         if (s == Sampling::Trilinear) {
@@ -84,11 +86,12 @@ std::array<std::uint32_t, 256> grayLut(float lo, float hi)
     return lut;
 }
 
-void renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
+bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
 {
     fb.create({h, w});
-    if (!in.surf || !in.volume) { std::fill(fb.data.begin(), fb.data.end(), 0xFF000000u); return; }
+    if (!in.surf || !in.volume) { std::fill(fb.data.begin(), fb.data.end(), 0xFF000000u); return false; }
     Volume& vol = *in.volume;
+    bool missed = false;
 
     Tensor3f coords, normals;
     in.surf->gen(&coords, &normals, w, h, in.camera.surfacePtr, in.camera.scale,
@@ -120,7 +123,7 @@ void renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
             for (int li = 0; li < nLayers; ++li) {
                 float zo = float(zStart + li);
                 Vec3f p = base + nrm * zo;
-                float v = sampleAdaptive(vol, lvl, p, in.sampling);
+                float v = sampleAdaptive(vol, lvl, p, in.sampling, missed);
                 if (v < float(cp.isoCutoff)) v = 0.0f;
                 stack[valid++] = v;
             }
@@ -143,6 +146,7 @@ void renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
             fb(y, x) = px;
         }
     }
+    return missed;
 }
 
 void postStretch(TensorU8& g)

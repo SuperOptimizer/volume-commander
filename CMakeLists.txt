@@ -11,6 +11,10 @@ endif()
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -funroll-loops -DNDEBUG")
 
 # --- c3d volumetric codec + libs3 (vendored sibling repos by default) ---
+# Disable OpenMP entirely: c3d decode stays single-threaded; ALL parallelism
+# comes from the IO pool (one chunk per worker thread). Nested OMP otherwise
+# spawns hundreds of threads and pegs the CPU.
+set(CMAKE_DISABLE_FIND_PACKAGE_OpenMP ON)
 set(C3D_DIR   "$ENV{HOME}/c3d"   CACHE PATH "Path to the c3d source tree")
 set(LIBS3_DIR "$ENV{HOME}/libs3" CACHE PATH "Path to the libs3 source tree")
 add_subdirectory(${C3D_DIR}   ${CMAKE_BINARY_DIR}/c3d-build)
@@ -25,7 +29,6 @@ pkg_check_modules(BLOSC2 IMPORTED_TARGET blosc2)
 pkg_check_modules(TIFF REQUIRED IMPORTED_TARGET libtiff-4)
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
-find_package(OpenMP REQUIRED)
 
 qt_standard_project_setup()
 
