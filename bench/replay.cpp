@@ -98,7 +98,8 @@ int main(int argc, char** argv)
     // Warm the cache (one full pass, untimed) so we benchmark the renderer,
     // not S3 latency. Then time N passes.
     Tensor32 fb;
-    for (auto& f : frames) renderSurface(fb, f.w, f.h, f.in);
+    RenderScratch scratch;   // reused across frames like a real viewer
+    for (auto& f : frames) renderSurface(fb, f.w, f.h, f.in, scratch);
 
     std::vector<double> times;
     times.reserve(frames.size() * passes);
@@ -106,7 +107,7 @@ int main(int argc, char** argv)
     for (int p = 0; p < passes; ++p)
         for (auto& f : frames) {
             auto a = Clock::now();
-            renderSurface(fb, f.w, f.h, f.in);
+            renderSurface(fb, f.w, f.h, f.in, scratch);
             times.push_back(std::chrono::duration<double,std::milli>(Clock::now()-a).count());
         }
     double total = std::chrono::duration<double,std::milli>(Clock::now()-t0).count();

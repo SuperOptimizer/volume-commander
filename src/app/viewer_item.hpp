@@ -61,6 +61,8 @@ private:
     std::shared_ptr<Surface> surface_;
     Camera camera_;
     QImage image_;
+    Tensor32 fb_;              // reused render framebuffer (worker thread)
+    RenderScratch scratch_;    // reused coord/normal/gray buffers (worker thread)
     std::atomic<bool> busy_{false};
     bool pending_ = false;
     QPointF lastPan_;

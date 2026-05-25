@@ -148,8 +148,11 @@ void ViewerItem::dispatchRender()
         FrameTrace::instance().log(viewName_.toUtf8().constData(), w, h, *snap);
 
     QThreadPool::globalInstance()->start([this, snap, w, h] {
-        Tensor32 fb;
-        bool missed = renderSurface(fb, w, h, *snap);
+        // scratch_/fb_ persist across frames (busy_ gate => one render at a
+        // time per item) so same-size frames reuse buffers — no per-frame
+        // page-fault/zero-fill churn.
+        bool missed = renderSurface(fb_, w, h, *snap, scratch_);
+        const Tensor32& fb = fb_;
         QImage img(w, h, QImage::Format_ARGB32);
         for (int y = 0; y < h; ++y)
             std::memcpy(img.scanLine(y), fb.row(y), std::size_t(w) * 4);

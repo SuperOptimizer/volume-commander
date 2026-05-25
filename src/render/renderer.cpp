@@ -104,12 +104,19 @@ std::array<std::uint32_t, 256> grayLut(float lo, float hi)
 
 bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
 {
+    RenderScratch tmp;
+    return renderSurface(fb, w, h, in, tmp);
+}
+
+bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScratch& scratch)
+{
     fb.createUninit({h, w});
     if (!in.surf || !in.volume) { std::fill(fb.data.begin(), fb.data.end(), 0xFF000000u); return false; }
     Volume& vol = *in.volume;
     bool missed = false;
 
-    Tensor3f coords, normals;
+    Tensor3f& coords = scratch.coords;
+    Tensor3f& normals = scratch.normals;
     in.surf->gen(&coords, &normals, w, h, in.camera.surfacePtr, in.camera.scale,
                  in.camera.zOff, in.camera.zOffDir);
 
@@ -131,7 +138,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
     const int lvl = in.camera.dsIdx;
     auto lut = grayLut(in.windowLow, in.windowHigh);
 
-    TensorU8 gray; gray.createUninit({h, w});   // every pixel written below
+    TensorU8& gray = scratch.gray; gray.createUninit({h, w});   // reused; every pixel written below
 
     // Tiled parallel render. Threads pull 64x64 output tiles from a shared
     // atomic counter (work-stealing — balances load when some tiles are empty
