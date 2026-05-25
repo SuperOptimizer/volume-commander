@@ -3,6 +3,7 @@ set(VC_SOURCES
   app/main.cpp
   data/volume.cpp
   render/surface.cpp
+  render/renderer.cpp
   utils/c3d_codec.cpp
 )
 
