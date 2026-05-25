@@ -3,6 +3,8 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <atomic>
+#include <thread>
 
 namespace vc {
 namespace {
@@ -127,29 +129,60 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
     auto lut = grayLut(in.windowLow, in.windowHigh);
 
     TensorU8 gray(h, w);
-    std::vector<float> stack(nLayers);
-    BlockCursor cur;   // exploits spatial coherence across pixels + layers
 
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            Vec3f base = coords(y, x);
-            if (base[0] == QuadSurface::kInvalid || !std::isfinite(base[0])) { gray(y, x) = 0; continue; }
-            Vec3f nrm = normals(y, x);
+    // Tiled parallel render. Threads pull 64x64 output tiles from a shared
+    // atomic counter (work-stealing — balances load when some tiles are empty
+    // air and finish instantly). Tiles keep the BlockCursor hot: a tile maps
+    // to a compact 3D region, so consecutive samples hit the same 16^3 blocks.
+    // This is the render hot path (74% of CPU); tiling spreads it across cores
+    // with good cache locality.
+    constexpr int kTile = 64;
+    const int tilesX = (w + kTile - 1) / kTile;
+    const int tilesY = (h + kTile - 1) / kTile;
+    const int nTiles = tilesX * tilesY;
+    std::atomic<int> nextTile{0};
+    std::atomic<bool> anyMiss{false};
+    unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    int nThreads = std::clamp(int(hw), 1, 8);
+    if (nTiles < 2) nThreads = 1;
 
-            int valid = 0;
-            for (int li = 0; li < nLayers; ++li) {
-                float zo = float(zStart + li);
-                Vec3f p = base + nrm * zo;
-                float v = sampleAdaptive(vol, lvl, p, in.sampling, missed, cur);
-                if (v < float(cp.isoCutoff)) v = 0.0f;
-                stack[valid++] = v;
+    auto worker = [&] {
+        BlockCursor cur;
+        std::vector<float> stack(nLayers);
+        bool miss = false;
+        for (;;) {
+            int t = nextTile.fetch_add(1, std::memory_order_relaxed);
+            if (t >= nTiles) break;
+            int tx = (t % tilesX) * kTile, ty = (t / tilesX) * kTile;
+            int x1 = std::min(w, tx + kTile), y1 = std::min(h, ty + kTile);
+            for (int y = ty; y < y1; ++y) {
+                for (int x = tx; x < x1; ++x) {
+                    Vec3f base = coords(y, x);
+                    if (base[0] == QuadSurface::kInvalid || !std::isfinite(base[0])) { gray(y, x) = 0; continue; }
+                    Vec3f nrm = normals(y, x);
+                    int valid = 0;
+                    for (int li = 0; li < nLayers; ++li) {
+                        Vec3f p = base + nrm * float(zStart + li);
+                        float v = sampleAdaptive(vol, lvl, p, in.sampling, miss, cur);
+                        if (v < float(cp.isoCutoff)) v = 0.0f;
+                        stack[valid++] = v;
+                    }
+                    float val = compositeLayerStack({stack.data(), std::size_t(valid)}, cp);
+                    if (cp.lightingEnabled) val *= computeLightingFactor(nrm, cp);
+                    gray(y, x) = std::uint8_t(std::clamp(val, 0.0f, 255.0f));
+                }
             }
-            float val = compositeLayerStack({stack.data(), std::size_t(valid)}, cp);
-
-            if (cp.lightingEnabled) val *= computeLightingFactor(nrm, cp);
-            gray(y, x) = std::uint8_t(std::clamp(val, 0.0f, 255.0f));
         }
+        if (miss) anyMiss.store(true, std::memory_order_relaxed);
+    };
+
+    if (nThreads == 1) {
+        worker();
+    } else {
+        std::vector<std::jthread> ts;
+        for (int t = 0; t < nThreads; ++t) ts.emplace_back(worker);
     }
+    missed = anyMiss.load(std::memory_order_relaxed);
 
     if (cs.postStretchValues) postStretch(gray);
     if (cs.postClaheEnabled)  postClahe(gray, cs.postClaheClipLimit, cs.postClaheTileSize);
