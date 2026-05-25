@@ -7,22 +7,38 @@
 namespace vc {
 namespace {
 
-// One voxel at level L, nearest, via the 256^3 chunk cache. Returns -1 if the
-// chunk isn't resident (caller falls back to a coarser level).
-inline int sampleNearestLevel(Volume& vol, int level, float sx, float sy, float sz)
+// Per-thread block cursor: caches the last block looked up so consecutive
+// samples in the SAME 16^3 block skip the cache mutex entirely. Adjacent
+// pixels/layers almost always hit the same block (spatial coherence), so a
+// whole frame takes ~one lock per distinct block instead of one per voxel —
+// the difference between contended-futex hell and a fast render.
+struct BlockCursor {
+    int level = -1, bz = -1, by = -1, bx = -1;
+    const Block* blk = nullptr;
+    bool hadMiss = false;     // a needed block wasn't resident (queued)
+};
+
+// One voxel at level L, nearest. Returns -1 if the block isn't resident.
+inline int sampleNearestLevel(Volume& vol, int level, float sx, float sy, float sz, BlockCursor& cur)
 {
     int ix = int(sx + 0.5f), iy = int(sy + 0.5f), iz = int(sz + 0.5f);
     auto shp = vol.shape(level);
     if (ix < 0 || iy < 0 || iz < 0 || iz >= shp[0] || iy >= shp[1] || ix >= shp[2]) return 0;
-    const Block* b = vol.block(level, iz >> 4, iy >> 4, ix >> 4);
-    if (!b) return -1;                       // not resident -> caller falls back coarser
+    int bz = iz >> 4, by = iy >> 4, bx = ix >> 4;
+    if (!(level == cur.level && bz == cur.bz && by == cur.by && bx == cur.bx)) {
+        cur.level = level; cur.bz = bz; cur.by = by; cur.bx = bx;
+        cur.blk = vol.block(level, bz, by, bx);   // the only locked call
+        if (!cur.blk) cur.hadMiss = true;
+    }
+    if (!cur.blk) return -1;
     int lz = iz & 15, ly = iy & 15, lx = ix & 15;
-    return b->v[(std::size_t(lz) * kBlock + ly) * kBlock + lx];
+    return cur.blk->v[(std::size_t(lz) * kBlock + ly) * kBlock + lx];
 }
 
 // Adaptive sample: world coords -> value, starting at desiredLevel and
 // falling back to coarser levels when chunks are missing.
-inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s, bool& missed)
+inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s,
+                            bool& missed, BlockCursor& cur)
 {
     const int n = vol.numLevels();
     for (int lvl = desiredLevel; lvl < n; ++lvl) {
@@ -36,7 +52,7 @@ inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s, 
             bool ok = true;
             const int dx[8] = {0,1,0,1,0,1,0,1}, dy[8] = {0,0,1,1,0,0,1,1}, dz[8] = {0,0,0,0,1,1,1,1};
             for (int k = 0; k < 8; ++k) {
-                int v = sampleNearestLevel(vol, lvl, float(x0+dx[k]), float(y0+dy[k]), float(z0+dz[k]));
+                int v = sampleNearestLevel(vol, lvl, float(x0+dx[k]), float(y0+dy[k]), float(z0+dz[k]), cur);
                 if (v < 0) { ok = false; break; }
                 c[k] = v;
             }
@@ -47,7 +63,7 @@ inline float sampleAdaptive(Volume& vol, int desiredLevel, Vec3f w, Sampling s, 
             float c01 = lerp(c[4], c[5], fx), c11 = lerp(c[6], c[7], fx);
             return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz);
         } else {
-            int v = sampleNearestLevel(vol, lvl, sx, sy, sz);
+            int v = sampleNearestLevel(vol, lvl, sx, sy, sz, cur);
             if (v < 0) continue;
             return float(v);
         }
@@ -112,6 +128,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
 
     TensorU8 gray(h, w);
     std::vector<float> stack(nLayers);
+    BlockCursor cur;   // exploits spatial coherence across pixels + layers
 
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
@@ -123,7 +140,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in)
             for (int li = 0; li < nLayers; ++li) {
                 float zo = float(zStart + li);
                 Vec3f p = base + nrm * zo;
-                float v = sampleAdaptive(vol, lvl, p, in.sampling, missed);
+                float v = sampleAdaptive(vol, lvl, p, in.sampling, missed, cur);
                 if (v < float(cp.isoCutoff)) v = 0.0f;
                 stack[valid++] = v;
             }

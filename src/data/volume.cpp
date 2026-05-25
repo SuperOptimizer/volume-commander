@@ -18,10 +18,8 @@ std::optional<std::vector<long long>> jsonIntArray(std::string_view s, std::stri
 {
     auto p = s.find(key);
     if (p == s.npos) return std::nullopt;
-    p = s.find('[', p);
-    if (p == s.npos) return std::nullopt;
-    auto e = s.find(']', p);
-    if (e == s.npos) return std::nullopt;
+    p = s.find('[', p); if (p == s.npos) return std::nullopt;
+    auto e = s.find(']', p); if (e == s.npos) return std::nullopt;
     std::vector<long long> out;
     for (std::size_t i = p + 1; i < e;) {
         while (i < e && (s[i] == ' ' || s[i] == ',' || s[i] == '\n' || s[i] == '\t')) ++i;
@@ -29,12 +27,10 @@ std::optional<std::vector<long long>> jsonIntArray(std::string_view s, std::stri
         long long v = 0;
         auto [np, ec] = std::from_chars(s.data() + i, s.data() + e, v);
         if (ec != std::errc{}) break;
-        out.push_back(v);
-        i = std::size_t(np - s.data());
+        out.push_back(v); i = std::size_t(np - s.data());
     }
     return out;
 }
-
 std::uint64_t fnv(std::string_view s) {
     std::uint64_t h = 1469598103934665603ull;
     for (char c : s) { h ^= std::uint8_t(c); h *= 1099511628211ull; }
@@ -49,7 +45,14 @@ std::shared_ptr<Volume> Volume::open(const std::string& url, int ioThreads)
     vol->prefix_ = url;
     while (!vol->prefix_.empty() && vol->prefix_.back() == '/') vol->prefix_.pop_back();
     vol->cacheKey_ = std::to_string(fnv(vol->prefix_));
-    vol->zeroBlock_ = std::make_shared<Block>();   // all zero
+
+    // lock-free table sized for ~12 GB of 4 KB blocks (~3M) -> 8M slots (load <0.5)
+    constexpr std::size_t kSlots = std::size_t(1) << 23;   // 8,388,608
+    vol->slots_ = std::vector<Slot>(kSlots);
+    vol->slotMask_ = kSlots - 1;
+    vol->arena_.emplace_back();                            // index 0 = the zero block
+    std::memset(vol->arena_.back().v.data(), 0, kBlockVox);
+    vol->zeroBlock_ = &vol->arena_.back();
 
     s3_config cfg{};
     s3_credentials_load("default", &cfg.creds);
@@ -58,9 +61,7 @@ std::shared_ptr<Volume> Volume::open(const std::string& url, int ioThreads)
     for (int lvl = 0; lvl < 16; ++lvl) {
         std::string key = vol->prefix_ + "/" + std::to_string(lvl) + "/zarr.json";
         s3_response r{};
-        if (s3_get(vol->s3_, key.c_str(), &r) != S3_OK || r.status != 200 || !r.body) {
-            s3_response_free(&r); break;
-        }
+        if (s3_get(vol->s3_, key.c_str(), &r) != S3_OK || r.status != 200 || !r.body) { s3_response_free(&r); break; }
         std::string_view body(reinterpret_cast<char*>(r.body), r.body_len);
         auto shp = jsonIntArray(body, "\"shape\"");
         s3_response_free(&r);
@@ -87,29 +88,26 @@ Volume::~Volume()
     if (s3_) s3_client_free(s3_);
 }
 
-// ---- block lookup (non-blocking) -----------------------------------------
-const Block* Volume::block(int level, int bz, int by, int bx)
+// ---- LOCK-FREE block lookup ----------------------------------------------
+const Block* Volume::block(int level, int bz, int by, int bx) noexcept
 {
-    BlockId id{level, bz, by, bx};
-    {
-        std::lock_guard lk(mtx_);
-        if (auto it = store_.find(id); it != store_.end()) {
-            lru_.splice(lru_.begin(), lru_, map_[id]);
-            return it->second.get();
-        }
+    const std::uint64_t key = blockKey(level, bz, by, bx);
+    std::size_t i = mix(key) & slotMask_;
+    for (std::size_t probe = 0; probe < 64; ++probe) {       // bounded linear probe
+        const Slot& s = slots_[i];
+        std::uint64_t k = s.key.load(std::memory_order_acquire);
+        if (k == key) return s.ptr.load(std::memory_order_acquire);
+        if (k == 0) break;                                    // empty -> not present
+        i = (i + 1) & slotMask_;
     }
-    // not resident -> queue the PARENT chunk (one decode fills 4096 blocks).
-    ChunkId cid{level, bz / kBlocksPerChunkAxis, by / kBlocksPerChunkAxis, bx / kBlocksPerChunkAxis};
-    queueChunk(cid);
+    // miss: queue the parent chunk (one decode publishes 4096 blocks)
+    queueChunk(ChunkId{level, bz / kBlocksPerChunkAxis, by / kBlocksPerChunkAxis, bx / kBlocksPerChunkAxis});
     return nullptr;
 }
 
 void Volume::queueChunk(const ChunkId& cid)
 {
-    {
-        std::lock_guard lk(mtx_);
-        if (haveChunk_.contains(cid)) return;   // already split into cache
-    }
+    { std::lock_guard lk(haveMtx_); if (haveChunk_.contains(cid)) return; }
     {
         std::lock_guard lk(qmtx_);
         if (inflight_.contains(cid)) return;
@@ -119,9 +117,7 @@ void Volume::queueChunk(const ChunkId& cid)
     qcv_.notify_one();
 }
 
-// ---- IOPool worker --------------------------------------------------------
 bool Volume::hasWork() const { for (auto& q : queue_) if (!q.empty()) return true; return false; }
-
 ChunkId Volume::popLocked()
 {
     for (int l = 15; l >= 0; --l)
@@ -159,9 +155,8 @@ std::vector<std::uint8_t> Volume::getRange(const std::string& key, std::uint64_t
 
 void Volume::fetchDecodeChunk(const ChunkId& id)
 {
-    // disk cache first
     std::vector<std::uint8_t> vox; bool present = false;
-    if (diskLoad(id, vox, present)) { insertChunkBlocks(id, present ? vox.data() : nullptr, present); return; }
+    if (diskLoad(id, vox, present)) { publishChunk(id, present ? vox.data() : nullptr, present); return; }
 
     const auto& lm = levels_[id.level];
     int sz = id.iz / kShardChunks, sy = id.iy / kShardChunks, sx = id.ix / kShardChunks;
@@ -171,14 +166,13 @@ void Volume::fetchDecodeChunk(const ChunkId& id)
                       + std::to_string(sz) + "/" + std::to_string(sy) + "/" + std::to_string(sx);
 
     auto idx = getRange(shard, linear * 16, 16);
-    if (idx.size() < 16) { diskStore(id, nullptr, false); insertChunkBlocks(id, nullptr, false); return; }
+    if (idx.size() < 16) { diskStore(id, nullptr, false); publishChunk(id, nullptr, false); return; }
     std::uint64_t off, nb;
-    std::memcpy(&off, idx.data(), 8);
-    std::memcpy(&nb, idx.data() + 8, 8);
-    if (off == ~0ull || nb == 0) { diskStore(id, nullptr, false); insertChunkBlocks(id, nullptr, false); return; }
+    std::memcpy(&off, idx.data(), 8); std::memcpy(&nb, idx.data() + 8, 8);
+    if (off == ~0ull || nb == 0) { diskStore(id, nullptr, false); publishChunk(id, nullptr, false); return; }
 
     auto comp = getRange(shard, off, nb);
-    if (comp.size() != nb) { insertChunkBlocks(id, nullptr, false); return; }  // transient; don't poison disk
+    if (comp.size() != nb) { publishChunk(id, nullptr, false); return; }   // transient
 
     std::vector<std::uint8_t> out(kChunkVox, 0);
     std::span<const std::byte> in(reinterpret_cast<const std::byte*>(comp.data()), comp.size());
@@ -190,15 +184,15 @@ void Volume::fetchDecodeChunk(const ChunkId& id)
         std::memcpy(out.data(), comp.data(), std::min<std::size_t>(comp.size(), kChunkVox));
     }
     diskStore(id, out.data(), true);
-    insertChunkBlocks(id, out.data(), true);
+    publishChunk(id, out.data(), true);
 }
 
-// Split a decoded 256^3 chunk into 16^3 blocks and insert into the LRU.
-void Volume::insertChunkBlocks(const ChunkId& id, const std::uint8_t* vox, bool present)
+// Split a decoded 256^3 chunk into 4096 blocks and publish each into the
+// lock-free table (release store). Absent chunk -> publish the shared zero
+// block for every slot so readers get 0 without ever queueing again.
+void Volume::publishChunk(const ChunkId& id, const std::uint8_t* vox, bool present)
 {
-    std::lock_guard lk(mtx_);
-    if (haveChunk_.contains(id)) return;
-    haveChunk_.insert(id);
+    { std::lock_guard lk(haveMtx_); if (!haveChunk_.insert(id).second) return; }
 
     const int b0z = id.iz * kBlocksPerChunkAxis;
     const int b0y = id.iy * kBlocksPerChunkAxis;
@@ -207,48 +201,39 @@ void Volume::insertChunkBlocks(const ChunkId& id, const std::uint8_t* vox, bool 
     for (int bz = 0; bz < kBlocksPerChunkAxis; ++bz)
       for (int by = 0; by < kBlocksPerChunkAxis; ++by)
         for (int bx = 0; bx < kBlocksPerChunkAxis; ++bx) {
-            BlockId bid{id.level, b0z + bz, b0y + by, b0x + bx};
-            std::shared_ptr<const Block> blk;
+            const Block* blk;
             if (!present) {
-                blk = zeroBlock_;            // share one zero block; costs nothing
+                blk = zeroBlock_;
             } else {
-                auto nb = std::make_shared<Block>();
-                // copy 16^3 sub-cube out of the 256^3 chunk
+                Block* nb;
+                { std::lock_guard lk(arenaMtx_); arena_.emplace_back(); nb = &arena_.back(); }
                 for (int z = 0; z < kBlock; ++z)
                   for (int y = 0; y < kBlock; ++y) {
                     const std::uint8_t* src = vox
-                        + (std::size_t((bz*kBlock + z)) * kChunk + (by*kBlock + y)) * kChunk + bx*kBlock;
+                        + (std::size_t(bz*kBlock + z) * kChunk + (by*kBlock + y)) * kChunk + bx*kBlock;
                     std::memcpy(nb->v.data() + (std::size_t(z)*kBlock + y)*kBlock, src, kBlock);
                   }
-                blk = std::move(nb);
+                blk = nb;
             }
-            if (store_.contains(bid)) continue;
-            lru_.push_front(bid);
-            map_[bid] = lru_.begin();
-            store_[bid] = std::move(blk);
-            if (store_[bid] != zeroBlock_) bytes_ += kBlockVox;   // zero block shared, ~free
+            // insert into lock-free table: claim an empty slot via CAS on key.
+            std::uint64_t key = blockKey(id.level, b0z + bz, b0y + by, b0x + bx);
+            std::size_t i = mix(key) & slotMask_;
+            for (std::size_t probe = 0; probe < 64; ++probe) {
+                Slot& s = slots_[i];
+                std::uint64_t k = s.key.load(std::memory_order_acquire);
+                if (k == key) break;                       // already published
+                if (k == 0) {
+                    std::uint64_t expected = 0;
+                    if (s.key.compare_exchange_strong(expected, key,
+                            std::memory_order_acq_rel, std::memory_order_acquire)) {
+                        s.ptr.store(blk, std::memory_order_release);
+                        break;
+                    }
+                    if (expected == key) break;            // someone else published same
+                }
+                i = (i + 1) & slotMask_;
+            }
         }
-    evictLocked();
-}
-
-void Volume::evictLocked()
-{
-    while (bytes_ > budget_ && !lru_.empty()) {
-        BlockId old = lru_.back();
-        lru_.pop_back();
-        auto it = store_.find(old);
-        if (it != store_.end()) {
-            if (it->second != zeroBlock_) bytes_ -= kBlockVox;
-            store_.erase(it);
-        }
-        map_.erase(old);
-        // Evicting a block means its parent chunk is no longer fully resident;
-        // drop the haveChunk_ mark so a future touch can re-queue + re-split.
-        // Without this, block() queues the chunk, queueChunk sees haveChunk_,
-        // skips, returns nullptr forever -> permanent miss -> infinite refine.
-        haveChunk_.erase(ChunkId{old.level,
-            old.bz / kBlocksPerChunkAxis, old.by / kBlocksPerChunkAxis, old.bx / kBlocksPerChunkAxis});
-    }
 }
 
 // ---- disk cache (one file per 256^3 chunk) --------------------------------
@@ -259,18 +244,15 @@ std::string Volume::diskPath(const ChunkId& id) const
          + std::to_string(id.level) + "_" + std::to_string(id.iz) + "_"
          + std::to_string(id.iy) + "_" + std::to_string(id.ix) + ".chunk";
 }
-
 bool Volume::diskLoad(const ChunkId& id, std::vector<std::uint8_t>& out, bool& present)
 {
     std::ifstream f(diskPath(id), std::ios::binary);
     if (!f) return false;
     char tag = 0; f.read(&tag, 1);
     present = tag != 0;
-    if (present) { out.assign(kChunkVox, 0); f.read(reinterpret_cast<char*>(out.data()), kChunkVox);
-                   if (!f) return false; }
+    if (present) { out.assign(kChunkVox, 0); f.read(reinterpret_cast<char*>(out.data()), kChunkVox); if (!f) return false; }
     return true;
 }
-
 void Volume::diskStore(const ChunkId& id, const std::uint8_t* vox, bool present)
 {
     namespace fs = std::filesystem;

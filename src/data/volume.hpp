@@ -6,12 +6,10 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
-#include <list>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -21,20 +19,19 @@ struct s3_client;  // libs3
 
 namespace vc {
 
-// volume-commander reads ONE format: c3d-sharded OME-zarr v3 on S3.
-//   uint8, C-order; inner chunk 256^3 c3d ("C3DC"); shard 4096^3 => 16^3 inner
-//   chunks/shard; shard = [index | chunk0(4k-aligned) | ...]; index =
-//   4096*(offset:u64,nbytes:u64) LE at shard START; levels = subdirs "0",..
-//   probed via "<n>/zarr.json"; scale = 2^level.
-inline constexpr int kChunk = 256;                       // decode atom
+// c3d-sharded OME-zarr v3 on S3. uint8; inner chunk 256^3 c3d; shard 4096^3
+// => 16^3 inner chunks/shard; shard = [index | chunk0(4k-aligned) | ...];
+// index = 4096*(offset:u64,nbytes:u64) LE at START; levels = subdirs probed
+// via "<n>/zarr.json"; scale = 2^level.
+inline constexpr int kChunk = 256;
 inline constexpr int kChunkVox = kChunk * kChunk * kChunk;
-inline constexpr int kShardChunks = 16;                  // inner chunks per shard axis
+inline constexpr int kShardChunks = 16;
 inline constexpr int kInnerPerShard = kShardChunks * kShardChunks * kShardChunks;
 
-inline constexpr int kBlock = 16;                        // CACHE granularity (VC3D model)
-inline constexpr int kBlockVox = kBlock * kBlock * kBlock;            // 4096 B
-inline constexpr int kBlocksPerChunkAxis = kChunk / kBlock;          // 16
-inline constexpr int kBlocksPerChunk = kBlocksPerChunkAxis * kBlocksPerChunkAxis * kBlocksPerChunkAxis;  // 4096
+inline constexpr int kBlock = 16;                          // cache granularity (VC3D)
+inline constexpr int kBlockVox = kBlock * kBlock * kBlock; // 4096 B
+inline constexpr int kBlocksPerChunkAxis = kChunk / kBlock; // 16
+inline constexpr int kBlocksPerChunk = kBlocksPerChunkAxis * kBlocksPerChunkAxis * kBlocksPerChunkAxis;
 
 struct LevelMeta {
     std::string path;
@@ -43,27 +40,8 @@ struct LevelMeta {
     std::array<int, 3> chunksPerAxis{};
 };
 
-// A 16^3 cached block. data==nullptr would never be stored; absent regions
-// store a shared all-zero block so the sampler reads 0 without a branch.
-struct Block {
-    std::array<std::uint8_t, kBlockVox> v;
-};
+struct Block { std::array<std::uint8_t, kBlockVox> v; };
 
-// Block coordinates (level + 16-voxel block grid).
-struct BlockId {
-    int level, bz, by, bx;
-    bool operator==(const BlockId&) const noexcept = default;
-};
-struct BlockIdHash {
-    std::size_t operator()(const BlockId& k) const noexcept {
-        std::uint64_t h = (std::uint64_t(unsigned(k.level)) << 57)
-                        ^ (std::uint64_t(unsigned(k.bz)) << 38)
-                        ^ (std::uint64_t(unsigned(k.by)) << 19)
-                        ^  std::uint64_t(unsigned(k.bx));
-        return std::size_t(h * 0x9E3779B97F4A7C15ULL);
-    }
-};
-// Chunk coordinates (decode unit) for the fetch queue / disk cache.
 struct ChunkId {
     int level, iz, iy, ix;
     bool operator==(const ChunkId&) const noexcept = default;
@@ -78,11 +56,11 @@ struct ChunkIdHash {
     }
 };
 
-// Async, thread-safe volume reader. The GUI thread NEVER blocks: block()
-// returns a resident 16^3 block or nullptr (and queues the parent chunk for
-// async S3 fetch + c3d decode on the IOPool). A decoded 256^3 chunk is split
-// into 4096 blocks and inserted into the block LRU; the chunk bytes are also
-// written to a disk cache so restarts skip S3.
+// Lock-free block cache. Open-addressed table of (key, Block*) slots. Readers
+// probe with acquire loads — NO locks, NO contention. IO workers publish
+// decoded blocks with release stores. Blocks are arena-allocated and live for
+// the session (immutable), so reader pointers never dangle. The render hot
+// path (millions of samples) never touches a mutex.
 class Volume {
 public:
     static std::shared_ptr<Volume> open(const std::string& url, int ioThreads = 6);
@@ -92,39 +70,56 @@ public:
     std::array<int, 3> shape(int level) const noexcept { return levels_[level].shape; }
     float scale(int level) const noexcept { return levels_[level].scale; }
 
-    // Non-blocking. Resident -> block ptr; else nullptr + parent chunk queued.
-    const Block* block(int level, int bz, int by, int bx);
+    // Lock-free. Resident -> block ptr; else nullptr + parent chunk queued.
+    const Block* block(int level, int bz, int by, int bx) noexcept;
 
     void setChunkReady(std::function<void()> cb) { onReady_ = std::move(cb); }
-    void setCacheBudgetBytes(std::size_t b) { budget_ = b; }
 
 private:
     Volume() = default;
     void worker();
-    void fetchDecodeChunk(const ChunkId&);           // S3 -> decode -> split -> insert blocks
+    void fetchDecodeChunk(const ChunkId&);
     std::vector<std::uint8_t> getRange(const std::string& key, std::uint64_t off, std::uint64_t len);
-    void insertChunkBlocks(const ChunkId&, const std::uint8_t* vox256, bool present);
-    void evictLocked();
-
+    void publishChunk(const ChunkId&, const std::uint8_t* vox256, bool present);
     std::string diskPath(const ChunkId&) const;
     bool diskLoad(const ChunkId&, std::vector<std::uint8_t>& out256, bool& present);
     void diskStore(const ChunkId&, const std::uint8_t* vox256, bool present);
+
+    static std::uint64_t blockKey(int level, int bz, int by, int bx) noexcept {
+        // sentinel(1)=1 | level(3) | bz(20) | by(20) | bx(20) = 64 bits, packed
+        // symmetrically. Top bit always set so a valid key is never 0 (0 ==
+        // empty slot). 8 levels; 20-bit axis = 1M blocks = 16M voxels/axis.
+        return (std::uint64_t(1) << 63)
+             | (std::uint64_t(unsigned(level) & 0x7) << 60)
+             | (std::uint64_t(unsigned(bz) & 0xFFFFF) << 40)
+             | (std::uint64_t(unsigned(by) & 0xFFFFF) << 20)
+             |  std::uint64_t(unsigned(bx) & 0xFFFFF);
+    }
+    static std::uint64_t mix(std::uint64_t k) noexcept {
+        k ^= k >> 33; k *= 0xff51afd7ed558ccdULL; k ^= k >> 33; return k;
+    }
+
+    struct Slot {
+        std::atomic<std::uint64_t> key{0};        // 0 = empty (keys are +1 packed)
+        std::atomic<const Block*> ptr{nullptr};
+    };
 
     std::string prefix_, cacheKey_;
     std::vector<LevelMeta> levels_;
     s3_client* s3_ = nullptr;
 
-    // Block RAM cache (LRU).
-    std::mutex mtx_;
-    std::unordered_map<BlockId, std::list<BlockId>::iterator, BlockIdHash> map_;
-    std::list<BlockId> lru_;
-    std::unordered_map<BlockId, std::shared_ptr<const Block>, BlockIdHash> store_;
-    std::shared_ptr<const Block> zeroBlock_;     // shared all-zero block for absent regions
-    std::unordered_set<ChunkId, ChunkIdHash> haveChunk_;   // chunks already split into cache
-    std::size_t bytes_ = 0;
-    std::size_t budget_ = std::size_t(12) << 30;
+    // lock-free slot table (power-of-2) + block arena (never freed in-session)
+    std::vector<Slot> slots_;
+    std::uint64_t slotMask_ = 0;
+    std::deque<Block> arena_;                     // stable addresses
+    std::mutex arenaMtx_;                         // only IO workers, only on publish
+    const Block* zeroBlock_ = nullptr;            // shared all-zero block (absent regions)
 
-    // IOPool: per-level chunk queue + dedup.
+    // chunk dedup (publish-once) — small set, only touched by IO workers
+    std::mutex haveMtx_;
+    std::unordered_set<ChunkId, ChunkIdHash> haveChunk_;
+
+    // IOPool
     std::mutex qmtx_;
     std::condition_variable qcv_;
     std::array<std::deque<ChunkId>, 16> queue_;
