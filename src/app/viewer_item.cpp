@@ -224,8 +224,15 @@ void ViewerItem::mouseMoveEvent(QMouseEvent* e)
         camera_.surfacePtr -= pl->vx * float(d.x() * inv);
         camera_.surfacePtr -= pl->vy * float(d.y() * inv);
     } else {
-        camera_.surfacePtr[0] -= float(d.x() * inv);
-        camera_.surfacePtr[1] -= float(d.y() * inv);
+        // QuadSurface ptr is in GRID coords; gen maps one pixel to
+        // gridScale/scale grid steps, so the pan delta needs that factor too
+        // (without it pan is ~1/gridScale too fast — e.g. 20x at gridScale .05).
+        auto* qs = static_cast<QuadSurface*>(surface_.get());
+        camera_.surfacePtr[0] -= float(d.x()) * qs->gridScale[0] * inv;
+        camera_.surfacePtr[1] -= float(d.y()) * qs->gridScale[1] * inv;
+        // Clamp to the grid so a drag can't fling the view into empty space.
+        camera_.surfacePtr[0] = std::clamp(camera_.surfacePtr[0], 0.0f, float(qs->points.cols()));
+        camera_.surfacePtr[1] = std::clamp(camera_.surfacePtr[1], 0.0f, float(qs->points.rows()));
     }
     beginInteraction();
     scheduleRender();
