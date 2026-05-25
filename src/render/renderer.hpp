@@ -20,6 +20,7 @@ std::array<std::uint32_t, 256> grayLut(float winLow, float winHigh);
 
 struct RenderInput {
     const Surface* surf = nullptr;
+    std::shared_ptr<const Surface> surfHold;  // keeps surf alive for async renders
     Volume* volume = nullptr;
     Camera camera;
     CompositeRenderSettings composite;

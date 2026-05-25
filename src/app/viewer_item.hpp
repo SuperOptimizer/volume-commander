@@ -3,6 +3,7 @@
 #include <QQuickPaintedItem>
 #include <QImage>
 #include <QPointF>
+#include <QTimer>
 #include <atomic>
 #include <memory>
 
@@ -36,6 +37,10 @@ public:
 signals:
     void stateChanged();
     void viewChanged();
+    void frameReady(QImage img);   // emitted from worker; queued to GUI thread
+
+private slots:
+    void onFrameReady(QImage img);
 
 protected:
     void mousePressEvent(QMouseEvent*) override;
@@ -46,8 +51,7 @@ protected:
 
 private:
     void rebuildSurface();
-    void renderNow();          // synchronous render into image_ (worker-dispatched)
-    void scheduleRender();
+    void scheduleRender();     // dispatch a render to a worker thread (never blocks GUI)
     bool worldAt(QPointF pos, Vec3f& out) const;  // screen px -> world voxel
 
     AppState* state_ = nullptr;
@@ -61,6 +65,7 @@ private:
     bool panning_ = false;
     bool painting_ = false;
     bool eraseStroke_ = false;
+    QTimer* refineTimer_ = nullptr;
 };
 
 }  // namespace vc

@@ -76,6 +76,7 @@ signals:
     void segmentChanged();
     void renderChanged();
     void maskPaintChanged();
+    void chunkArrived();   // a fetched chunk decoded; viewers should refine
 
 private:
     void bump() { ++renderRev_; emit renderChanged(); }

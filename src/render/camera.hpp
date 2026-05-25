@@ -11,7 +11,7 @@ namespace vc {
 // zoom (output px per world/grid unit); dsIdx is the pyramid level to sample.
 struct Camera {
     Vec3f surfacePtr{0, 0, 0};
-    float scale = 0.5f;
+    float scale = 1.0f;          // 1 volume voxel (at level 0) per window pixel
     float zOff = 0.0f;          // normal-offset slice navigation
     int   dsIdx = 0;            // pyramid level index
     float dsScale = 1.0f;       // 1 / 2^dsIdx

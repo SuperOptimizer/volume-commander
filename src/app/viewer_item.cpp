@@ -3,6 +3,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QThreadPool>
 
 namespace vc {
 
@@ -10,6 +11,8 @@ ViewerItem::ViewerItem(QQuickItem* parent) : QQuickPaintedItem(parent)
 {
     setAcceptedMouseButtons(Qt::AllButtons);
     setAcceptHoverEvents(false);
+    // worker thread -> GUI thread frame handoff
+    connect(this, &ViewerItem::frameReady, this, &ViewerItem::onFrameReady, Qt::QueuedConnection);
 }
 ViewerItem::~ViewerItem() = default;
 
@@ -22,6 +25,15 @@ void ViewerItem::setState(AppState* s)
         connect(state_, &AppState::renderChanged, this, [this] { rebuildSurface(); scheduleRender(); });
         connect(state_, &AppState::volumeChanged, this, [this] { rebuildSurface(); scheduleRender(); });
         connect(state_, &AppState::segmentChanged, this, [this] { rebuildSurface(); scheduleRender(); });
+        // chunks streaming in -> coalesced refine (don't re-render per chunk)
+        connect(state_, &AppState::chunkArrived, this, [this] {
+            if (!refineTimer_) {
+                refineTimer_ = new QTimer(this);
+                refineTimer_->setSingleShot(true);
+                connect(refineTimer_, &QTimer::timeout, this, [this] { scheduleRender(); });
+            }
+            if (!refineTimer_->isActive()) refineTimer_->start(80);
+        });
     }
     emit stateChanged();
     rebuildSurface();
@@ -58,32 +70,37 @@ void ViewerItem::rebuildSurface()
 
 void ViewerItem::scheduleRender()
 {
-    if (busy_.load()) { pending_ = true; return; }
-    renderNow();
+    const int w = int(width()), h = int(height());
+    if (!state_ || !surface_ || !state_->volume() || w <= 0 || h <= 0) return;
+    if (busy_.exchange(true)) { pending_ = true; return; }   // one render in flight
+
+    // Immutable snapshot for the worker — GUI thread mutates camera_ freely.
+    auto snap = std::make_shared<RenderInput>();
+    snap->surf = surface_.get();        // surfaces live as long as state_; ok for snapshot
+    snap->surfHold = surface_;          // keep alive across the worker run
+    snap->volume = state_->volume();
+    snap->camera = camera_;
+    snap->composite = state_->composite();
+    snap->windowLow = state_->windowLow();
+    snap->windowHigh = state_->windowHigh();
+    snap->mask = state_->mask();
+
+    QThreadPool::globalInstance()->start([this, snap, w, h] {
+        Tensor32 fb;
+        renderSurface(fb, w, h, *snap);
+        QImage img(w, h, QImage::Format_ARGB32);
+        for (int y = 0; y < h; ++y)
+            std::memcpy(img.scanLine(y), fb.row(y), std::size_t(w) * 4);
+        emit frameReady(img);   // queued (see ctor connect) -> onFrameReady on GUI thread
+    });
 }
 
-void ViewerItem::renderNow()
+void ViewerItem::onFrameReady(QImage img)
 {
-    const int w = int(width()), h = int(height());
-    if (!state_ || !surface_ || !state_->volume() || w <= 0 || h <= 0) { update(); return; }
-
-    RenderInput in;
-    in.surf = surface_.get();
-    in.volume = state_->volume();
-    in.camera = camera_;
-    in.composite = state_->composite();
-    in.windowLow = state_->windowLow();
-    in.windowHigh = state_->windowHigh();
-    in.mask = state_->mask();
-
-    Tensor32 fb;
-    renderSurface(fb, w, h, in);
-
-    QImage img(w, h, QImage::Format_ARGB32);
-    for (int y = 0; y < h; ++y)
-        std::memcpy(img.scanLine(y), fb.row(y), std::size_t(w) * 4);
     image_ = std::move(img);
+    busy_.store(false);
     update();
+    if (pending_) { pending_ = false; scheduleRender(); }
 }
 
 void ViewerItem::paint(QPainter* p)

@@ -10,6 +10,8 @@ bool AppState::openVolume(const QString& url)
 {
     auto v = Volume::open(url.toStdString());
     if (!v) { std::println(stderr, "openVolume failed: {}", url.toStdString()); return false; }
+    // chunk-ready fires on an IOPool thread; hop to GUI via a queued signal.
+    v->setChunkReady([this] { QMetaObject::invokeMethod(this, "chunkArrived", Qt::QueuedConnection); });
     volume_ = v;
     volumeUrl_ = url;
     mask_.reset();  // mask is sized to the new volume on first paint

@@ -8,6 +8,8 @@
 int main(int argc, char** argv)
 {
     QGuiApplication app(argc, argv);
+    app.setOrganizationName("ScrollPrize");
+    app.setOrganizationDomain("scrollprize.org");
     app.setApplicationName("volume-commander");
 
     QQmlApplicationEngine engine;
