@@ -22,7 +22,7 @@ inline CompositeMethod parseComposite(std::string_view s) noexcept {
 }
 
 struct CompositeParams {
-    CompositeMethod method = CompositeMethod::mean;
+    CompositeMethod method = CompositeMethod::max;
 
     // alpha blend knobs (front-to-back over the layer stack)
     float alphaMin = 0.0f, alphaMax = 1.0f, alphaOpacity = 1.0f, alphaCutoff = 1.0f;

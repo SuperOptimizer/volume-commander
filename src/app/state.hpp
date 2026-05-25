@@ -97,7 +97,7 @@ private:
     Sampling sampling_ = Sampling::Nearest;
     QString interpName_ = "nearest";
     CompositeRenderSettings composite_;
-    QString methodName_ = "mean";
+    QString methodName_ = "max";
     QString volumeUrl_, segmentDir_;
     float windowLow_ = 0.0f, windowHigh_ = 255.0f;
     int renderRev_ = 0;

@@ -121,6 +121,7 @@ ApplicationWindow {
                 Label { text: "Layers behind: " + app.layersBehind; color: "#bbb" }
                 Slider { Layout.fillWidth: true; from: 0; to: 64; stepSize: 1; value: app.layersBehind; onMoved: app.layersBehind = value }
                 ComboBox { Layout.fillWidth: true; model: ["mean", "max", "min", "alpha"]
+                    currentIndex: Math.max(0, model.indexOf(app.compositeMethod))
                     onActivated: app.compositeMethod = currentText }
 
                 Label { text: "Interpolation"; color: "#bbb" }
