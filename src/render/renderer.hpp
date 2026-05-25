@@ -26,6 +26,10 @@ struct RenderInput {
     CompositeRenderSettings composite;
     float windowLow = 0.0f, windowHigh = 255.0f;
     Sampling sampling = Sampling::Nearest;
+    // Composite-ray subsampling: sample every Nth layer along the normal over
+    // the same z-extent. 1 = full quality; 2-3 during interaction (cheap,
+    // near-identical for max/mean — you're reducing/averaging anyway).
+    int layerStride = 1;
     const MaskVolume* mask = nullptr; // optional 3D label mask (binary)
     std::uint32_t maskColor = 0x80FF3030;  // ARGB overlay tint for labeled voxels
 };

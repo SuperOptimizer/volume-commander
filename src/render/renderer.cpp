@@ -132,9 +132,13 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
     int front = plane ? cs.planeLayersFront : cs.layersFront;
     int behind = plane ? cs.planeLayersBehind : cs.layersBehind;
     if (!cs.enabled) { front = 1; behind = 0; }
-    int nLayers = std::max(1, front + behind + 1);
+    int totalLayers = std::max(1, front + behind + 1);
     int zStart = -behind;
     if (cs.reverseDirection) zStart = -front;
+    // Subsample the ray every `stride` layers over the same extent (cheap
+    // quality trade during interaction). step covers `stride` voxels per sample.
+    const int stride = std::max(1, in.layerStride);
+    int nLayers = (totalLayers + stride - 1) / stride;
 
     // Force nearest when compositing multiple layers: the multi-sample
     // averaging already low-passes, so per-layer trilinear is wasted work
@@ -168,7 +172,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
     static const CompositeRunFn runKernel = pickCompositeRun();
     const bool useKernel = (samp == Sampling::Nearest);
     RowKernelArgs ka{};
-    ka.vol = &vol; ka.lvl = lvl; ka.nLayers = nLayers; ka.zStart = zStart;
+    ka.vol = &vol; ka.lvl = lvl; ka.nLayers = nLayers; ka.zStart = zStart; ka.stride = stride;
     ka.method = cp.method; ka.iso = float(cp.isoCutoff);
     ka.alphaLo = cp.alphaMin * 255.0f;
     { float r = cp.alphaMax*255.0f - ka.alphaLo; ka.alphaInvRange = r>0?1.0f/r:0.0f; }

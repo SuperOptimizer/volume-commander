@@ -27,6 +27,7 @@ struct RowKernelArgs {
     int lvl;
     int nLayers;
     int zStart;
+    int stride = 1;   // voxels advanced per sampled layer (ray subsampling)
     CompositeMethod method;
     float iso;
     float alphaLo, alphaInvRange, alphaOpacity, alphaCutoff;
@@ -61,7 +62,7 @@ void compositeRun(const RowKernelArgs& a, int n,
     for (int i = 0; i < n; ++i) {
         valid[i] = base[i][0] != QuadSurface::kInvalid && std::isfinite(base[i][0]);
         Vec3f q = (base[i] + nrm[i] * float(a.zStart)) * f;
-        Vec3f d = nrm[i] * f;
+        Vec3f d = nrm[i] * (f * float(a.stride));
         qx[i]=q[0]; qy[i]=q[1]; qz[i]=q[2]; dx[i]=d[0]; dy[i]=d[1]; dz[i]=d[2];
         acc[i]=0; amax[i]=0; amin[i]=255; aalpha[i]=0; cnt[i]=0;
     }

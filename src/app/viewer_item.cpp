@@ -142,6 +142,7 @@ void ViewerItem::dispatchRender()
     snap->windowLow = state_->windowLow();
     snap->windowHigh = state_->windowHigh();
     snap->sampling = state_->sampling();
+    snap->layerStride = interactive_ ? 3 : 1;   // subsample the ray while moving
     snap->mask = state_->mask();
 
     if (FrameTrace::instance().enabled())
