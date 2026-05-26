@@ -20,6 +20,18 @@ bool AppState::openVolume(const QString& url)
     return true;
 }
 
+bool AppState::openOverlay(const QString& url)
+{
+    auto v = Volume::open(url.toStdString());
+    if (!v) { std::println(stderr, "openOverlay failed: {}", url.toStdString()); return false; }
+    v->setChunkReady([this] { QMetaObject::invokeMethod(this, "chunkArrived", Qt::QueuedConnection); });
+    overlay_ = v;
+    overlayUrl_ = url;
+    emit overlayChanged();
+    bump();
+    return true;
+}
+
 bool AppState::loadSegment(const QString& dir)
 {
     auto s = QuadSurface::load(dir.toStdString());

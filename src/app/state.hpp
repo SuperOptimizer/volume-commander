@@ -32,15 +32,20 @@ class AppState : public QObject {
     Q_PROPERTY(bool maskPaint READ maskPaint WRITE setMaskPaint NOTIFY maskPaintChanged)
     Q_PROPERTY(QString interpolation READ interpolation WRITE setInterpolation NOTIFY renderChanged)
     Q_PROPERTY(float brushRadius READ brushRadius WRITE setBrushRadius NOTIFY maskPaintChanged)
+    Q_PROPERTY(QString overlayUrl READ overlayUrl NOTIFY overlayChanged)
+    Q_PROPERTY(float overlayOpacity READ overlayOpacity WRITE setOverlayOpacity NOTIFY renderChanged)
+    Q_PROPERTY(float overlayThreshold READ overlayThreshold WRITE setOverlayThreshold NOTIFY renderChanged)
 
 public:
     explicit AppState(QObject* parent = nullptr) : QObject(parent) {}
 
     Q_INVOKABLE bool openVolume(const QString& url);
+    Q_INVOKABLE bool openOverlay(const QString& url);   // second c3d zarr, blended on top
     Q_INVOKABLE bool loadSegment(const QString& dir);
     Q_INVOKABLE void saveMask(const QString& dir);
 
     Volume* volume() const { return volume_.get(); }
+    Volume* overlay() const { return overlay_.get(); }
     std::shared_ptr<QuadSurface> segment() const { return segment_; }
     MaskVolume* mask() const { return mask_.get(); }
 
@@ -63,6 +68,9 @@ public:
     float brushRadius() const { return brushRadius_; }
     Sampling sampling() const { return sampling_; }
     QString interpolation() const { return interpName_; }
+    QString overlayUrl() const { return overlayUrl_; }
+    float overlayOpacity() const { return overlayOpacity_; }
+    float overlayThreshold() const { return overlayThreshold_; }
 
     void setWindowLow(float v) { windowLow_ = v; bump(); }
     void setWindowHigh(float v) { windowHigh_ = v; bump(); }
@@ -79,9 +87,12 @@ public:
         sampling_ = m == "trilinear" ? Sampling::Trilinear : Sampling::Nearest;
         bump();
     }
+    void setOverlayOpacity(float v) { overlayOpacity_ = v; bump(); }
+    void setOverlayThreshold(float v) { overlayThreshold_ = v; bump(); }
 
 signals:
     void volumeChanged();
+    void overlayChanged();
     void segmentChanged();
     void renderChanged();
     void maskPaintChanged();
@@ -91,6 +102,10 @@ private:
     void bump() { ++renderRev_; emit renderChanged(); }
 
     std::shared_ptr<Volume> volume_;
+    std::shared_ptr<Volume> overlay_;    // optional second c3d volume (e.g. ink3d)
+    QString overlayUrl_;
+    float overlayOpacity_ = 0.6f;
+    float overlayThreshold_ = 20.0f;     // overlay voxels below this aren't drawn
     std::shared_ptr<QuadSurface> segment_;
     std::shared_ptr<MaskVolume> mask_;   // 3D binary label mask (lazily created)
     float brushRadius_ = 3.0f;

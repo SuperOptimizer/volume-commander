@@ -17,10 +17,12 @@ ApplicationWindow {
     Settings {
         id: settings
         property string volumeUrl: ""
+        property string overlayUrl: ""
         property string segmentUrl: ""
     }
     Component.onCompleted: {
         if (settings.volumeUrl) { volUrl.text = settings.volumeUrl; app.openVolume(settings.volumeUrl) }
+        if (settings.overlayUrl) { ovrUrl.text = settings.overlayUrl; app.openOverlay(settings.overlayUrl) }
         if (settings.segmentUrl) { segUrl.text = settings.segmentUrl; app.loadSegment(settings.segmentUrl) }
     }
 
@@ -102,6 +104,16 @@ ApplicationWindow {
                     placeholderText: "s3://bucket/path/volume.zarr" }
                 Button { text: "Open volume"; Layout.fillWidth: true
                     onClicked: { settings.volumeUrl = volUrl.text; app.openVolume(volUrl.text) } }
+
+                Label { text: "Overlay volume (S3, c3d)"; color: "#bbb" }
+                TextField { id: ovrUrl; Layout.fillWidth: true
+                    placeholderText: "s3://bucket/path/ink3d.zarr" }
+                Button { text: "Open overlay"; Layout.fillWidth: true
+                    onClicked: { settings.overlayUrl = ovrUrl.text; app.openOverlay(ovrUrl.text) } }
+                Label { text: "Overlay opacity: " + app.overlayOpacity.toFixed(2); color: "#bbb" }
+                Slider { Layout.fillWidth: true; from: 0; to: 1; value: app.overlayOpacity; onMoved: app.overlayOpacity = value }
+                Label { text: "Overlay threshold: " + app.overlayThreshold.toFixed(0); color: "#bbb" }
+                Slider { Layout.fillWidth: true; from: 0; to: 255; value: app.overlayThreshold; onMoved: app.overlayThreshold = value }
 
                 Label { text: "Segment (S3)"; color: "#bbb" }
                 TextField { id: segUrl; Layout.fillWidth: true

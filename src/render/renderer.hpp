@@ -32,6 +32,12 @@ struct RenderInput {
     int layerStride = 1;
     const MaskVolume* mask = nullptr; // optional 3D label mask (binary)
     std::uint32_t maskColor = 0x80FF3030;  // ARGB overlay tint for labeled voxels
+    // Optional second volume (e.g. ink3d) composited over the base. Sampled at
+    // the same world coords with the same composite settings, colormapped and
+    // alpha-blended over the base grayscale.
+    Volume* overlay = nullptr;
+    float overlayOpacity = 0.6f;
+    float overlayThreshold = 20.0f;   // overlay value below this -> not drawn
 };
 
 // Reusable per-viewer scratch. Passing the same instance across frames keeps
@@ -40,6 +46,7 @@ struct RenderInput {
 struct RenderScratch {
     Tensor3f coords, normals;
     TensorU8 gray;
+    TensorU8 gray2;   // overlay-volume composite buffer (only used if overlay set)
 };
 
 // Render `surf` through `volume` into an ARGB framebuffer (w*h, row-major).

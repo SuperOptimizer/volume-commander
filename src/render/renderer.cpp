@@ -82,6 +82,16 @@ inline bool maskAt(const MaskVolume* mask, Vec3f w)
     return mask && mask->at(int(w[0] + 0.5f), int(w[1] + 0.5f), int(w[2] + 0.5f));
 }
 
+// Heat colormap for the overlay value [0,255] -> RGB (black->red->yellow->white).
+inline std::uint32_t hotColor(float v)
+{
+    float t = std::clamp(v / 255.0f, 0.0f, 1.0f);
+    float r = std::clamp(t * 3.0f, 0.0f, 1.0f);
+    float g = std::clamp(t * 3.0f - 1.0f, 0.0f, 1.0f);
+    float b = std::clamp(t * 3.0f - 2.0f, 0.0f, 1.0f);
+    return (std::uint32_t(r*255) << 16) | (std::uint32_t(g*255) << 8) | std::uint32_t(b*255);
+}
+
 inline std::uint32_t blendOver(std::uint32_t base, std::uint32_t over)
 {
     unsigned a = (over >> 24) & 0xFF;
@@ -179,7 +189,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
     ka.alphaOpacity = cp.alphaOpacity; ka.alphaCutoff = cp.alphaCutoff;
     ka.lightingEnabled = cp.lightingEnabled; ka.lightParams = cp;
 
-    auto worker = [&] {
+    auto worker = [&](Volume& V, TensorU8& G, const RowKernelArgs& kargs) {
         BlockCursor cur;
         bool miss = false;
         for (;;) {
@@ -191,7 +201,7 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
                 for (int y = ty; y < y1; ++y) {
                     for (int x = tx; x < x1; x += kMaxRun) {
                         int run = std::min(kMaxRun, x1 - x);
-                        runKernel(ka, run, &coords(y,x), &normals(y,x), &gray(y,x), miss);
+                        runKernel(kargs, run, &coords(y,x), &normals(y,x), &G(y,x), miss);
                     }
                 }
                 continue;
@@ -199,50 +209,35 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
             for (int y = ty; y < y1; ++y) {
                 for (int x = tx; x < x1; ++x) {
                     Vec3f base = coords(y, x);
-                    if (base[0] == QuadSurface::kInvalid || !std::isfinite(base[0])) { gray(y, x) = 0; continue; }
+                    if (base[0] == QuadSurface::kInvalid || !std::isfinite(base[0])) { G(y, x) = 0; continue; }
                     Vec3f nrm = normals(y, x);
                     Compositor comp(cp);
                     const float iso = float(cp.isoCutoff);
-                    if (samp == Sampling::Nearest) [[likely]] {
-                        // Fast composite path: walk the ray in level-scaled space
-                        // by incremental add (q += d), no per-sample multiply.
-                        const float f = 1.0f / float(1 << lvl);
-                        Vec3f q = (base + nrm * float(zStart)) * f;
-                        const Vec3f d = nrm * f;
-                        for (int li = 0; li < nLayers; ++li, q += d) {
-                            int v = sampleNearestLevel(vol, lvl, q[0], q[1], q[2], cur);
-                            if (v < 0) {            // not resident at this level
-                                missed = true;
-                                Vec3f w = base + nrm * float(zStart + li);
-                                v = int(sampleAdaptive(vol, lvl + 1, w, samp, miss, cur));
-                                cur.level = -1;     // sampleAdaptive used cur at other levels
-                            }
-                            float fv = float(v) < iso ? 0.0f : float(v);
-                            if (!comp.add(fv)) break;
-                        }
-                    } else {
+                    {
                         Vec3f p = base + nrm * float(zStart);
                         for (int li = 0; li < nLayers; ++li, p += nrm) {
-                            float v = sampleAdaptive(vol, lvl, p, samp, miss, cur);
+                            float v = sampleAdaptive(V, lvl, p, samp, miss, cur);
                             if (v < iso) v = 0.0f;
                             if (!comp.add(v)) break;
                         }
                     }
                     float val = comp.value();
                     if (cp.lightingEnabled) val *= computeLightingFactor(nrm, cp);
-                    gray(y, x) = std::uint8_t(std::clamp(val, 0.0f, 255.0f));
+                    G(y, x) = std::uint8_t(std::clamp(val, 0.0f, 255.0f));
                 }
             }
         }
         if (miss) anyMiss.store(true, std::memory_order_relaxed);
     };
 
-    if (nThreads == 1) {
-        worker();
-    } else {
+    auto runTiles = [&](Volume& V, TensorU8& G, const RowKernelArgs& kargs) {
+        nextTile.store(0, std::memory_order_relaxed);
+        if (nThreads == 1) { worker(V, G, kargs); return; }
         std::vector<std::jthread> ts;
-        for (int t = 0; t < nThreads; ++t) ts.emplace_back(worker);
-    }
+        for (int t = 0; t < nThreads; ++t) ts.emplace_back([&]{ worker(V, G, kargs); });
+    };
+
+    runTiles(vol, gray, ka);
     missed = anyMiss.load(std::memory_order_relaxed);
 
     if (cs.postStretchValues) postStretch(gray);
@@ -250,9 +245,28 @@ bool renderSurface(Tensor32& fb, int w, int h, const RenderInput& in, RenderScra
     if (cs.postRakingEnabled) postRaking(gray, cs.postRakingAzimuth, cs.postRakingElevation,
                                          cs.postRakingStrength, cs.postRakingDepthScale);
 
+    // Optional overlay volume: composite it (same geometry/settings) into a
+    // second gray buffer, hot-colormap + alpha-blend over the base where it
+    // exceeds the threshold (e.g. ink3d probability over the CT).
+    TensorU8* ovr = nullptr;
+    if (in.overlay) {
+        ovr = &scratch.gray2; ovr->createUninit({h, w});
+        RowKernelArgs ko = ka; ko.vol = in.overlay;
+        runTiles(*in.overlay, *ovr, ko);
+    }
+
+    const float oth = in.overlayThreshold, oop = std::clamp(in.overlayOpacity, 0.0f, 1.0f);
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             std::uint32_t px = lut[gray(y, x)];
+            if (ovr) {
+                float ov = (*ovr)(y, x);
+                if (ov >= oth) {
+                    float t = std::clamp((ov - oth) / std::max(1.0f, 255.0f - oth), 0.0f, 1.0f) * oop;
+                    std::uint32_t hot = hotColor(ov);   // colormap the overlay value
+                    px = blendOver(px, (std::uint32_t(t * 255.0f) << 24) | (hot & 0x00FFFFFF));
+                }
+            }
             if (in.mask && maskAt(in.mask, coords(y, x))) px = blendOver(px, in.maskColor);
             fb(y, x) = px;
         }

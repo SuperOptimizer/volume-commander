@@ -153,6 +153,9 @@ void ViewerItem::dispatchRender()
     // quality (1) is available but the heavy seg frames don't need it.
     snap->layerStride = interactive_ ? 4 : 2;
     snap->mask = state_->mask();
+    snap->overlay = state_->overlay();
+    snap->overlayOpacity = state_->overlayOpacity();
+    snap->overlayThreshold = state_->overlayThreshold();
 
     if (FrameTrace::instance().enabled())
         FrameTrace::instance().log(viewName_.toUtf8().constData(), w, h, *snap);
