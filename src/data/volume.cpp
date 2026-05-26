@@ -268,7 +268,14 @@ void Volume::publishChunk(const ChunkId& id, const std::uint8_t* vox, bool prese
             for (std::size_t probe = 0; probe < 64; ++probe) {
                 Slot& s = slots_[i];
                 std::uint64_t k = s.key.load(std::memory_order_acquire);
-                if (k == key) break;                       // already published
+                if (k == key) {
+                    // Slot exists — may hold kPending from a render claim, or a
+                    // real block. Publish the decoded block (idempotent: storing
+                    // the same/real ptr over kPending is the whole point).
+                    if (s.ptr.load(std::memory_order_acquire) == kPending)
+                        s.ptr.store(blk, std::memory_order_release);
+                    break;
+                }
                 if (k == 0) {
                     std::uint64_t expected = 0;
                     if (s.key.compare_exchange_strong(expected, key,
@@ -276,7 +283,11 @@ void Volume::publishChunk(const ChunkId& id, const std::uint8_t* vox, bool prese
                         s.ptr.store(blk, std::memory_order_release);
                         break;
                     }
-                    if (expected == key) break;            // someone else published same
+                    if (expected == key) {                 // raced; store if still pending
+                        if (s.ptr.load(std::memory_order_acquire) == kPending)
+                            s.ptr.store(blk, std::memory_order_release);
+                        break;
+                    }
                 }
                 i = (i + 1) & slotMask_;
             }

@@ -77,13 +77,33 @@ public:
         const std::uint64_t key = blockKey(level, bz, by, bx);
         std::size_t i = mix(key) & slotMask_;
         for (int probe = 0; probe < 64; ++probe) {
-            const Slot& s = slots_[i];
+            Slot& s = slots_[i];
             std::uint64_t k = s.key.load(std::memory_order_acquire);
-            if (k == key) return s.ptr.load(std::memory_order_acquire);
-            if (k == 0) break;
+            if (k == key) {
+                const Block* p = s.ptr.load(std::memory_order_acquire);
+                return p == kPending ? nullptr : p;   // already requested, still loading
+            }
+            if (k == 0) {
+                // Claim this slot with a "pending" marker so repeat misses for
+                // this block DON'T re-call queueMiss (which takes 2 mutexes).
+                // Only the CAS winner queues the fetch. Decode later overwrites
+                // ptr with the real Block. Massively cuts lock contention when
+                // the render touches many not-yet-resident blocks per frame.
+                std::uint64_t expected = 0;
+                if (s.key.compare_exchange_strong(expected, key,
+                        std::memory_order_acq_rel, std::memory_order_acquire)) {
+                    s.ptr.store(kPending, std::memory_order_release);
+                    queueMiss(level, bz, by, bx);
+                    return nullptr;
+                }
+                if (expected == key) {   // someone else just claimed it
+                    const Block* p = s.ptr.load(std::memory_order_acquire);
+                    return p == kPending ? nullptr : p;
+                }
+                // expected != key and != 0: slot taken by another key, keep probing
+            }
             i = (i + 1) & slotMask_;
         }
-        queueMiss(level, bz, by, bx);
         return nullptr;
     }
 
@@ -122,8 +142,10 @@ private:
 
     struct Slot {
         std::atomic<std::uint64_t> key{0};        // 0 = empty (keys are +1 packed)
-        std::atomic<const Block*> ptr{nullptr};
+        std::atomic<const Block*> ptr{nullptr};   // nullptr=claimed-not-stored, kPending=queued, else Block*
     };
+    // sentinel ptr meaning "this block has been queued for fetch, still loading"
+    static inline const Block* const kPending = reinterpret_cast<const Block*>(std::uintptr_t(1));
 
     std::string prefix_, cacheKey_;
     bool local_ = false;            // prefix_ is a filesystem path, not s3://
