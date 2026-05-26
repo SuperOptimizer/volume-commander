@@ -24,7 +24,11 @@ void ViewerItem::setState(AppState* s)
     if (state_) disconnect(state_, nullptr, this, nullptr);
     state_ = s;
     if (state_) {
-        connect(state_, &AppState::renderChanged, this, [this] { rebuildSurface(); scheduleRender(); });
+        // renderChanged = a render SETTING changed (window/opacity/layers/...):
+        // just re-render in place. Only volume/segment changes rebuild the
+        // surface (which resets the camera) — rebuilding on every setting tweak
+        // was snapping the view back to default on each slider move.
+        connect(state_, &AppState::renderChanged, this, [this] { scheduleRender(); });
         connect(state_, &AppState::volumeChanged, this, [this] { rebuildSurface(); scheduleRender(); });
         connect(state_, &AppState::segmentChanged, this, [this] { rebuildSurface(); scheduleRender(); });
         // Progressive refinement: when a queued chunk finishes decoding into
