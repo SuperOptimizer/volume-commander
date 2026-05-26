@@ -34,6 +34,7 @@ void ViewerItem::setState(AppState* s)
         // — it stops re-rendering once no new chunks land — because the level
         // selection bounds demand to what the current zoom needs.
         connect(state_, &AppState::chunkArrived, this, [this] {
+            if (!pendingChunks_) return;   // we're fully resident; not our chunk
             if (!refineTimer_) {
                 refineTimer_ = new QTimer(this);
                 refineTimer_->setSingleShot(true);
@@ -169,10 +170,14 @@ void ViewerItem::dispatchRender()
     });
 }
 
-void ViewerItem::onFrameReady(QImage img, bool /*missed*/)
+void ViewerItem::onFrameReady(QImage img, bool missed)
 {
     image_ = std::move(img);
     busy_.store(false);
+    // Only this viewer's OWN unresolved chunks matter for refine: if this
+    // frame was fully resident, a chunkArrived from some OTHER viewer's fetch
+    // shouldn't redraw us (e.g. 3 idle planes while you pan the flattened view).
+    pendingChunks_ = missed;
     update();
     if (pending_) { pending_ = false; scheduleRender(); }
     // No refine loop. We rendered the best data available (camera level, else

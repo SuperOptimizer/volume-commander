@@ -69,6 +69,7 @@ private:
     bool panning_ = false;
     bool painting_ = false;
     bool eraseStroke_ = false;
+    bool pendingChunks_ = false;   // this view awaits chunks -> refine on arrival
     QTimer* refineTimer_ = nullptr;
     QTimer* zoomTimer_ = nullptr;
     QTimer* idleTimer_ = nullptr;
